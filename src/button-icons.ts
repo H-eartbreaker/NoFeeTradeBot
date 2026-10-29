@@ -13,13 +13,15 @@ export function buttonIcon(text: string, data?: string): string | null {
   if (/^wallet:(page|view):/.test(data)) return "👛";
   if (/^trk:/.test(data)) return "👀";
   if (data === "sol:home") return "◎";
+  if (data === "sol:wallet") return "👛";
+  if (data === "sol:deposit") return "📥";
   if (data === "sol:hold") return "📊";
   if (data === "sol:slip") return "⚙️";
   if (data === "sol:gen") return "➕";
   if (data === "sol:genok" || /^sol:ok:/.test(data)) return "✅";
   if (/^sol:no:/.test(data)) return "✖️";
   if (/^sol:b:/.test(data)) return "🛒";
-  if (/^sol:cb:/.test(data)) return "✏️";
+  if (/^sol:c[bs]:/.test(data)) return "✏️";
   if (/^sol:s:/.test(data)) return "💸";
   if (/^sol:card:/.test(data)) return "👀";
   if (/^wallet:deposit:/.test(data)) return "📥";

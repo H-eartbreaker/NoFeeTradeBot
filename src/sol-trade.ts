@@ -39,12 +39,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function execute(rpc: SolRpc, signer: KeyPairSigner, swapQuote: Quote): Promise<Signature> {
+async function execute(rpc: SolRpc, signer: KeyPairSigner, swapQuote: Quote, ensureCurrent: () => void): Promise<Signature> {
   const built = await swapTransaction(swapQuote, signer.address);
+  ensureCurrent();
   const decoded = getTransactionDecoder().decode(getBase64Encoder().encode(built.transaction));
   const signed = await signTransaction([signer.keyPair], decoded);
   const signature = getSignatureFromTransaction(signed);
   const wire = getBase64EncodedWireTransaction(signed);
+  ensureCurrent();
   try {
     await rpc.sendTransaction(wire, { encoding: "base64", skipPreflight: false, maxRetries: 0n }).send();
   } catch {
@@ -72,22 +74,25 @@ async function awaitLanding(rpc: SolRpc, signature: Signature, lastValidBlockHei
   throw new SolPendingError(signature);
 }
 
-export async function buySol(rpc: SolRpc, signer: KeyPairSigner, mint: string, lamports: bigint, slippageBps: number): Promise<TradeResult> {
+export async function buySol(rpc: SolRpc, signer: KeyPairSigner, mint: string, lamports: bigint, slippageBps: number, approvedQuote?: Quote, ensureCurrent = () => {}): Promise<TradeResult> {
   const balance = await solBalance(rpc, signer.address);
   if (balance < lamports + RESERVE_LAMPORTS) throw new SolTradeError("SOL 余额不足（需要留 0.01 SOL 作为手续费和账户租金）");
-  const swapQuote = await quote(SOL_MINT, mint, lamports, slippageBps);
-  const signature = await execute(rpc, signer, swapQuote);
+  const swapQuote = approvedQuote ?? await quote(SOL_MINT, mint, lamports, slippageBps);
+  if (BigInt(swapQuote.inAmount) !== lamports) throw new SolTradeError("报价金额已变化，请重新确认");
+  const signature = await execute(rpc, signer, swapQuote, ensureCurrent);
   return { signature, quote: swapQuote };
 }
 
-export async function sellToken(rpc: SolRpc, signer: KeyPairSigner, mint: string, pct: 25 | 50 | 100, slippageBps: number): Promise<TradeResult> {
+export async function sellToken(rpc: SolRpc, signer: KeyPairSigner, mint: string, pct: number, slippageBps: number, approvedQuote?: Quote, ensureCurrent = () => {}): Promise<TradeResult> {
+  if (!Number.isFinite(pct) || pct < 0.01 || pct > 100 || Math.abs(pct * 100 - Math.round(pct * 100)) > 1e-8) throw new SolTradeError("卖出比例无效");
   const balance = await solBalance(rpc, signer.address);
   if (balance < FEE_FLOOR_LAMPORTS) throw new SolTradeError("SOL 余额不足以支付交易费用");
   const held = (await holdings(rpc, signer.address)).find((h) => h.mint === mint);
   if (!held) throw new SolTradeError("当前钱包没有这个代币的余额");
-  const amount = pct === 100 ? held.amount : (held.amount * BigInt(pct)) / 100n;
+  const amount = (held.amount * BigInt(Math.round(pct * 100))) / 10_000n;
   if (amount <= 0n) throw new SolTradeError("卖出数量为 0");
-  const swapQuote = await quote(mint, SOL_MINT, amount, slippageBps);
-  const signature = await execute(rpc, signer, swapQuote);
+  const swapQuote = approvedQuote ?? await quote(mint, SOL_MINT, amount, slippageBps);
+  if (BigInt(swapQuote.inAmount) !== amount) throw new SolTradeError("持仓数量已变化，请重新确认卖出");
+  const signature = await execute(rpc, signer, swapQuote, ensureCurrent);
   return { signature, quote: swapQuote };
 }

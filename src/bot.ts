@@ -18,6 +18,7 @@ import { registerApprovals } from "./approvals-panel.ts";
 import { registerOrders } from "./orders-panel.ts";
 import { registerTracked } from "./tracked-panel.ts";
 import { registerSolana } from "./sol-panel.ts";
+import { SOLANA } from "./sol-settings.ts";
 import { OrderStore } from "./orders.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
@@ -80,7 +81,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   const services = { ...defaults, ...overrides };
   const bot = new Bot(cfg.botToken, { client: { fetch: nativeFetch } });
   installButtonIcons(bot);
-  const activeKey = () => state.activeChain && deps.has(state.activeChain) ? state.activeChain : cfg.chains[0].key;
+  const activeKey = () => state.activeChain && (state.activeChain === SOLANA.key || deps.has(state.activeChain)) ? state.activeChain : cfg.chains[0].key;
   const walletList = () => wallets?.list() ?? [{ id: "main", label: "主钱包", address: deps.get(cfg.chains[0].key)!.clients.account.address }];
   const activeWallet = () => walletList().some((p) => p.id === state.activeWallet) ? state.activeWallet : "main";
   const getDeps = (chain: string, wallet = activeWallet()) => wallets?.get(wallet, chain) ?? (wallet === "main" ? deps.get(chain) : undefined);
@@ -91,6 +92,8 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   let clearFunds: (() => void) | undefined;
   let clearPositions: (() => void) | undefined;
   let clearApprovals: (() => void) | undefined;
+  let clearOrders: (() => void) | undefined;
+  let clearTracked: (() => void) | undefined;
 
   // 所有菜单、输入和交易回调都经过同一白名单校验。
   bot.use(async (ctx, next) => {
@@ -99,24 +102,27 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     if ((ctx.callbackQuery && !ctx.callbackQuery.data?.startsWith("funds:")) || ctx.message?.text?.startsWith("/")) clearFunds?.();
     if ((ctx.callbackQuery && !/^(exit|positions|pcard):/.test(ctx.callbackQuery.data ?? "")) || ctx.message?.text?.startsWith("/")) clearPositions?.();
     if ((ctx.callbackQuery && !ctx.callbackQuery.data?.startsWith("auth:")) || ctx.message?.text?.startsWith("/")) clearApprovals?.();
+    if (/^(c:|sol:home$)/.test(ctx.callbackQuery?.data ?? "") || /^\/sol(?:@\w+)?(?:\s|$)/.test(ctx.message?.text ?? "")) {
+      pendingBuys.clear(); clearOrders?.(); clearTracked?.();
+    }
     await next();
   });
-  const logos = registerLogos(bot, state, cfg.chains);
+  const displayChains = [...cfg.chains, SOLANA];
+  const logos = registerLogos(bot, state, displayChains);
+  const solana = registerSolana(bot, { state, rpcUrl: cfg.solanaRpcUrl, chains: cfg.chains, logos, mainKeyboard: () => mainKeyboard(), navigate: home });
   clearApprovals = registerApprovals(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps }, { readToken: services.readToken, getRoute: services.getRoute });
   clearPositions = registerPositions(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps,
     slippage: (key) => settings(key).sellSlippageBps, refresh: refreshCard }, { readToken: services.readToken, getRoute: services.getRoute, sell: services.sell });
   clearFunds = registerFundsPanel(bot, { chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps, slippage: (key) => settings(key).buySlippageBps });
-  registerOrders(bot, { store: orders, state, chains: cfg.chains, logos, deps: getDeps,
+  clearOrders = registerOrders(bot, { store: orders, state, chains: cfg.chains, logos, deps: getDeps,
     slippage: (key, side) => (side === "buy" ? settings(key).buySlippageBps : settings(key).sellSlippageBps) });
-  registerTracked(bot, { state, logos, activeChain: activeKey, deps: getDeps });
+  clearTracked = registerTracked(bot, { state, logos, activeChain: activeKey, deps: getDeps });
   registerWalletPanel(bot, { state, chains: cfg.chains, logos, directory: wallets, list: walletList, activeWallet, activeChain: activeKey,
     deps: getDeps, readToken: services.readToken, onSwitch: () => { input = null; pendingBuys.clear(); } });
-  registerSolana(bot, { state, rpcUrl: cfg.solanaRpcUrl });
   const mainKeyboard = () => new InlineKeyboard().text("买入 / 查看代币", "nav:buy").text("持仓与盈亏", `positions:${activeKey()}:${activeWallet()}:0`).row()
     .text("钱包管理", "wallet:page:0").text("余额", "nav:balance").text("追踪钱包", "trk:list:0").row()
     .text("交易记录", `history:${activeWallet()}:${activeKey()}:0`).text("授权管理", `auth:list:${activeKey()}:${activeWallet()}:0`).row()
     .text("转账 / 兑换 / 跨链", "funds:menu").text("自动订单", "ord:list:0").row()
-    .text("Solana 买卖", "sol:home").row()
     .text("切换交易链", "nav:chain").text("设置", "nav:settings").row().text("止盈止损", "nav:tpsl").text("使用说明", "nav:help");
   const backKeyboard = () => new InlineKeyboard().text("返回首页", "nav:start");
   function invalidate(chain: string) {
@@ -144,6 +150,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     } else await ctx.reply(text, { ...HTML, reply_markup: kb });
   }
   async function home(ctx: Context) {
+    if (activeKey() === SOLANA.key) { await solana.home(ctx); return; }
     const d = getDeps(activeKey())!;
     const s = settings(d.chain.key);
     const wallet = walletList().find((w) => w.id === activeWallet())!;
@@ -156,7 +163,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   }
   async function showChains(ctx: Context) {
     const kb = new InlineKeyboard();
-    for (const c of cfg.chains) logos.button(kb, c, `${c.key === activeKey() ? "✓ " : ""}${c.label}`, `c:${c.key}`).row();
+    for (const c of displayChains) logos.button(kb, c, `${c.key === activeKey() ? "✓ " : ""}${c.label}`, `c:${c.key}`).row();
     kb.text("返回首页", "nav:start");
     await panel(ctx, "选择要交易的链：", kb);
   }
@@ -175,15 +182,18 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
         return lines.join("\n");
       } catch { return `<b>${logos.chain(c)}</b> · 查询失败，请稍后重试`; }
     }));
-    kb.text("返回首页", "nav:start");
-    await panel(ctx, `钱包：<code>${getDeps(activeKey())!.clients.account.address}</code>\n\n${sections.join("\n\n")}`, kb);
+    sections.push(await solana.balanceSummary());
+    kb.text("Solana 持仓", "sol:hold").row().text("返回首页", "nav:start");
+    const header = activeKey() === SOLANA.key ? "各链余额（Solana 使用独立地址）" : `当前 EVM 钱包：<code>${getDeps(activeKey())!.clients.account.address}</code>`;
+    await panel(ctx, `${header}\n\n${sections.join("\n\n")}`, kb);
   }
   async function showSettings(ctx: Context, key = activeKey(), edit = false) {
+    if (key === SOLANA.key) { await solana.settings(ctx); return; }
     const d = getDeps(key)!;
     const s = settings(key);
     const display = state.display;
     const kb = new InlineKeyboard();
-    for (const c of cfg.chains) logos.button(kb, c, `${c.key === key ? "✓ " : ""}${c.label}`, `settings:${c.key}`).row();
+    for (const c of displayChains) logos.button(kb, c, `${c.key === key ? "✓ " : ""}${c.label}`, `settings:${c.key}`).row();
     kb.text(`买前确认：${s.buyConfirmation ? "开启" : "关闭"}`, `set:${key}:confirm:${s.buyConfirmation ? 0 : 1}`).row()
       .text(`发 CA 快速买入：${s.quickBuy ? "开启" : "关闭"}`, `set:${key}:quick:${s.quickBuy ? 0 : 1}`).row()
       .text(`买入滑点 ${s.buySlippageBps / 100}%`, `set:${key}:buy-slip`).text(`卖出滑点 ${s.sellSlippageBps / 100}%`, `set:${key}:sell-slip`).row()
@@ -470,7 +480,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   });
   bot.callbackQuery(new RegExp(`^c:${KEY}$`), async (ctx) => {
     const d = dep(ctx, ctx.match[1]); if (!d) return;
-    state.setActiveChain(d.chain.key); await ctx.answerCallbackQuery(`已切换到 ${d.chain.label}`); await home(ctx);
+    pendingBuys.clear(); state.setActiveChain(d.chain.key); await ctx.answerCallbackQuery(`已切换到 ${d.chain.label}`); await home(ctx);
   });
   bot.callbackQuery(new RegExp(`^settings:${KEY}$`), async (ctx) => {
     const d = dep(ctx, ctx.match[1]); if (!d) return;
@@ -520,7 +530,8 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     }
     const token = extractAddress(ctx.message.text);
     if (token) {
-      const d = getDeps(activeKey())!;
+      const d = getDeps(activeKey());
+      if (!d) { await ctx.reply("请核对当前链和代币地址。"); return; }
       if (settings(d.chain.key).quickBuy) await requestBuy(ctx, d, token, settings(d.chain.key).buyAmounts[0]);
       else await showCard(ctx, d, token);
     }

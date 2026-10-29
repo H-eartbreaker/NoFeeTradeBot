@@ -41,7 +41,7 @@ const HTML = { parse_mode: "HTML", link_preview_options: { is_disabled: true } }
 const PAGE = 5;
 const MINUTE = 60_000;
 
-export function registerOrders(bot: Bot, o: Options, overrides: Partial<OrdersServices> = {}): void {
+export function registerOrders(bot: Bot, o: Options, overrides: Partial<OrdersServices> = {}): () => void {
   const s = { ...defaults, ...overrides };
   let input: Input | null = null;
   const pendings = new Map<string, Pending>();
@@ -278,4 +278,5 @@ export function registerOrders(bot: Bot, o: Options, overrides: Partial<OrdersSe
     await ctx.answerCallbackQuery("已取消");
     await list(ctx, 0);
   });
+  return clear;
 }

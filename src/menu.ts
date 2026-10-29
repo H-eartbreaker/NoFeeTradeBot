@@ -2,7 +2,7 @@ import type { Api } from "grammy";
 
 export const commands = [
   { command: "start", description: "打开交易终端" },
-  { command: "chain", description: "选择交易链：BSC / Base / ETH / 罗宾汉" },
+  { command: "chain", description: "选择交易链：BNB / Base / ETH / 罗宾汉 / SOL" },
   { command: "balance", description: "查看各链余额和持仓" },
   { command: "positions", description: "持仓盈亏、卖回本金与按金额卖出" },
   { command: "approvals", description: "查询和撤销已知代币授权" },
@@ -16,7 +16,6 @@ export const commands = [
   { command: "tpsl", description: "设置止盈止损，点击后直接回复数字" },
   { command: "orders", description: "自动订单：限价、市值、定投和订单中心" },
   { command: "track", description: "追踪钱包：只记录地址和备注，不自动交易" },
-  { command: "sol", description: "Solana 买卖和持仓（第一版）" },
   { command: "help", description: "查看使用说明" },
 ];
 

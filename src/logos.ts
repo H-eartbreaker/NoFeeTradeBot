@@ -81,7 +81,7 @@ export class Logos {
     const icon = this.emoji(this.state.logos.chains[chain.key]?.chain, "🔗");
     return `${icon ? `${icon} ` : ""}${escapeHtml(chain.label)}`;
   }
-  native(chain: ChainConfig): string {
+  native(chain: Pick<ChainConfig, "key" | "nativeSymbol">): string {
     const icon = this.emoji(this.state.logos.chains[chain.key]?.native, "🪙");
     return `${icon ? `${icon} ` : ""}${chain.nativeSymbol}`;
   }
@@ -89,7 +89,7 @@ export class Logos {
     const id = this.state.logos.chains[key]?.native;
     return this.emoji(id, "🪙") || (id ? "已保存" : "未设置");
   }
-  button(kb: InlineKeyboard, chain: ChainConfig, text: string, data: string): InlineKeyboard {
+  button(kb: InlineKeyboard, chain: Pick<ChainConfig, "key">, text: string, data: string): InlineKeyboard {
     const id = this.state.logos.chains[chain.key]?.chain;
     return kb.text({ text, ...(this.state.logos.enabled && !this.unavailable && id && ID.test(id) ? { icon_custom_emoji_id: id } : {}) }, data);
   }
@@ -110,7 +110,7 @@ export class Logos {
   retry(): void { this.unavailable = false; }
 }
 
-export function registerLogos(bot: Bot, state: State, chains: ChainConfig[]): Logos {
+export function registerLogos(bot: Bot, state: State, chains: Pick<ChainConfig, "key" | "label" | "nativeSymbol">[]): Logos {
   const logos = new Logos(state); logos.installFallback(bot);
   let input: { expires: number } | null = null;
   let pending: { id: string; expires: number; chains: Record<string, ChainLogo> } | null = null;
