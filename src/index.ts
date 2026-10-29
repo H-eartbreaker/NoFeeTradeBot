@@ -23,7 +23,7 @@ enableKeepAlive([
 ]);
 const state = new State("data/state.json");
 const journal = new Journal("data/trades.jsonl", (e) => applyJournalEntry(state, e));
-const wallets = new Wallets(cfg.privateKey, cfg.chains, ".env", journal);
+const wallets = new Wallets(cfg.privateKey, cfg.chains, ".env", journal, (chain) => state.chainSettings(chain).execution ?? {});
 const deps = wallets.depsFor("main");
 await reconcile(journal, state, (wallet, chain) => wallets.get(wallet, chain));
 const orders = new OrderStore("data/orders.json");

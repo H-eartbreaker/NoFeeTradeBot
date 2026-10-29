@@ -16,6 +16,7 @@ import type { RiskFilter } from "./risk-policy.ts";
 import type { RuleKind, Tier } from "./auto-rules.ts";
 import { registerApprovals } from "./approvals-panel.ts";
 import { registerOrders } from "./orders-panel.ts";
+import { registerExecutionPanel } from "./execution-panel.ts";
 import { registerTracked } from "./tracked-panel.ts";
 import { registerSolana } from "./sol-panel.ts";
 import type { SolanaServices } from "./sol-panel.ts";
@@ -95,11 +96,12 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   let clearApprovals: (() => void) | undefined;
   let clearOrders: (() => void) | undefined;
   let clearTracked: (() => void) | undefined;
+  let clearExecution: (() => void) | undefined;
 
   // 所有菜单、输入和交易回调都经过同一白名单校验。
   bot.use(async (ctx, next) => {
     if (ctx.from?.id !== cfg.allowedUserId || ctx.chat?.type !== "private") return;
-    if (ctx.callbackQuery || ctx.message?.text?.startsWith("/")) input = null;
+    if (ctx.callbackQuery || ctx.message?.text?.startsWith("/")) { input = null; clearExecution?.(); }
     if ((ctx.callbackQuery && !ctx.callbackQuery.data?.startsWith("funds:")) || ctx.message?.text?.startsWith("/")) clearFunds?.();
     if ((ctx.callbackQuery && !/^(exit|positions|pcard):/.test(ctx.callbackQuery.data ?? "")) || ctx.message?.text?.startsWith("/")) clearPositions?.();
     if ((ctx.callbackQuery && !ctx.callbackQuery.data?.startsWith("auth:")) || ctx.message?.text?.startsWith("/")) clearApprovals?.();
@@ -110,6 +112,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   });
   const displayChains = [...cfg.chains, SOLANA];
   const logos = registerLogos(bot, state, displayChains);
+  clearExecution = registerExecutionPanel(bot, { state, chains: cfg.chains, logos, changed: invalidate });
   const solana = registerSolana(bot, { state, rpcUrl: cfg.solanaRpcUrl, chains: cfg.chains, logos, mainKeyboard: () => mainKeyboard(), navigate: home }, solanaOverrides);
   clearApprovals = registerApprovals(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps }, { readToken: services.readToken, getRoute: services.getRoute });
   clearPositions = registerPositions(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps,
@@ -203,6 +206,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       .text(`浏览器入口：${display.showExplorer ? "显示" : "隐藏"}`, `display:${key}:explorer:${display.showExplorer ? 0 : 1}`).row()
       .text(`时区 ${display.timeZone}`, `set:${key}:zone`).text(`${display.hour12 ? 12 : 24} 小时制`, `display:${key}:hour12:${display.hour12 ? 0 : 1}`).row()
       .text("链 Logo", "logos:settings").text("风控过滤", `risk:${key}`).row()
+      .text("发送与费用", `exec:${key}`).row()
       .text("自动止盈止损", "nav:tpsl").text("恢复本链默认", `set:${key}:reset`).row().text("返回首页", "nav:start");
     await panel(ctx, ["<b>交易设置</b>", `正在设置：${logos.chain(d.chain)}`, `买入按钮：${s.buyAmounts.map((a) => formatEther(a)).join(" / ")} ${d.chain.nativeSymbol}`,
       `卖出按钮：${s.sellPercentages.map((p) => `${p}%`).join(" / ")}`, `快速买入金额：第一档 ${formatEther(s.buyAmounts[0])} ${d.chain.nativeSymbol}`, "", "交易参数按链保存；显示和时间设置对所有链生效。", "修改参数不会重写已有仓位的止盈止损。"].join("\n"), kb, edit);

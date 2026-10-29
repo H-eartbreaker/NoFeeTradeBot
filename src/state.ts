@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { RuleKind, Tier } from "./auto-rules.ts";
 import type { RiskFilter } from "./risk-policy.ts";
+import type { ExecutionSettings } from "./execution.ts";
 
 // cost 是买入花费的原生币（wei，字符串存储）；tp/sl/trail 是百分比，null 表示不启用
 // tiers 是分档止盈（at 为涨幅%，pct 为卖出当前余额的%）；done 为已执行档数；peak 为观察到的最高价值（wei）
@@ -17,6 +18,7 @@ export type ChainSettings = {
   buyConfirmation?: boolean;
   quickBuy?: boolean;
   risk?: RiskFilter;
+  execution?: ExecutionSettings;
 };
 export type Blacklist = { tokens: string[]; developers: string[] };
 export type TrackedWallet = { address: string; label: string };
@@ -103,9 +105,9 @@ export class State {
 
   // 风控过滤属于安全设置，不随“恢复本链默认”一起清除
   resetChainSettings(chain: string): void {
-    const risk = this.data.chainSettings[chain]?.risk;
+    const { risk, execution } = this.data.chainSettings[chain] ?? {};
     delete this.data.chainSettings[chain];
-    if (risk) this.data.chainSettings[chain] = { risk };
+    if (risk || execution) this.data.chainSettings[chain] = { ...(risk ? { risk } : {}), ...(execution ? { execution } : {}) };
     this.save();
   }
 

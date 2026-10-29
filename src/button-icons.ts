@@ -11,6 +11,7 @@ export function buttonIcon(text: string, data?: string): string | null {
   const navigation: Record<string, string> = { "nav:start": "🏠", "nav:buy": "🛒", "nav:balance": "📊", "nav:chain": "🔗", "nav:settings": "⚙️", "nav:tpsl": "🎯", "nav:help": "📖" };
   if (navigation[data]) return navigation[data];
   if (/^wallet:(page|view):/.test(data)) return "👛";
+  if (/^exec:/.test(data)) return "🛡️";
   if (/^trk:/.test(data)) return "👀";
   if (data === "sol:home") return "◎";
   if (data === "sol:wallet") return "👛";

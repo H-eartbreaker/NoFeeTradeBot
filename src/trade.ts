@@ -4,8 +4,10 @@ import type { ChainConfig } from "./chains.ts";
 import { NATIVE, buildSwap, getRoute, routeIdentity } from "./kyber.ts";
 import type { Clients } from "./wallet.ts";
 import type { Journal, JournalEntry } from "./journal.ts";
+import { broadcastEvm, gasOverrides, validateExecution } from "./execution.ts";
+import type { ExecutionSettings } from "./execution.ts";
 
-export type TradeDeps = { clients: Clients; chain: ChainConfig; walletId?: string; journal?: Journal };
+export type TradeDeps = { clients: Clients; chain: ChainConfig; walletId?: string; journal?: Journal; execution?: () => ExecutionSettings };
 export type BuyResult = { hash: Hex; received: bigint; blockNumber: bigint };
 export type SellResult = { hash: Hex; soldAmount: bigint; receivedNative: bigint; approveHash: Hex | null; blockNumber: bigint; balanceBefore?: bigint };
 export type BuyConfirmation = { route: string; minimumOutput: bigint; expiresAt?: number };
@@ -38,7 +40,7 @@ export class ConfirmedTransactionError extends Error {
 export function receiptFee(receipt: { gasUsed: bigint; effectiveGasPrice: bigint; l1Fee?: bigint | string }): { gasCost: bigint; feeComplete: boolean } {
   return { gasCost: receipt.gasUsed * receipt.effectiveGasPrice + BigInt(receipt.l1Fee ?? 0), feeComplete: receipt.l1Fee !== undefined };
 }
-export type PreparedGas = { gas?: bigint; maxFeePerGas?: bigint; gasPrice?: bigint };
+export type PreparedGas = { gas?: bigint; maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint; gasPrice?: bigint };
 export const bufferedGas = (gas: bigint) => (gas * 12n + 9n) / 10n;
 export function executionFee(request: PreparedGas): bigint {
   const price = request.maxFeePerGas ?? request.gasPrice;
@@ -61,13 +63,15 @@ export async function sendAndWait(
   const { account, publicClient, walletClient } = clients;
   if (journal?.pending(d.walletId ?? "main", d.chain.key)) throw new PendingTransactionError();
   // gas 估算、nonce、手续费并行取回，再一次发出
-  const req = await walletClient.prepareTransactionRequest({ account, chain: walletClient.chain, ...tx });
+  const req = await walletClient.prepareTransactionRequest({ account, chain: walletClient.chain, ...tx, ...gasOverrides(d.execution?.() ?? {}) });
+  validateExecution(d, req);
   validate?.(req);
   const journalId = journal && details ? journal.start({ chain: d.chain.key, wallet: d.walletId ?? "main", ...details }) : undefined;
   let hash: Hex | undefined;
   let reverted = false;
   try {
-    hash = await walletClient.sendTransaction({ ...req, gas: bufferedGas(req.gas ?? 0n) } as never);
+    validateExecution(d, req);
+    hash = await broadcastEvm(d, { ...req, gas: bufferedGas(req.gas ?? 0n) });
     if (journalId) journal!.update(journalId, { hash, status: "pending" });
     const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 90_000 });
     reverted = receipt.status !== "success";

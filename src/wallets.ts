@@ -8,6 +8,7 @@ import type { ChainConfig } from "./chains.ts";
 import type { TradeDeps } from "./trade.ts";
 import { createClients } from "./wallet.ts";
 import type { Journal } from "./journal.ts";
+import type { ExecutionSettings } from "./execution.ts";
 
 export type WalletProfile = { id: string; label: string; address: `0x${string}` };
 
@@ -18,9 +19,11 @@ export class Wallets {
   private chains: ChainConfig[];
   private file: string;
   private journal?: Journal;
+  private execution?: (chain: string) => ExecutionSettings;
 
-  constructor(primary: Hex, chains: ChainConfig[], file = ".env", journal?: Journal) {
+  constructor(primary: Hex, chains: ChainConfig[], file = ".env", journal?: Journal, execution?: (chain: string) => ExecutionSettings) {
     this.chains = chains; this.file = file; this.journal = journal;
+    this.execution = execution;
     this.addToMemory("main", primary, "主钱包");
     const env = existsSync(file) ? parseEnv(readFileSync(file, "utf8")) : {};
     for (const [name, value] of Object.entries(env)) {
@@ -44,7 +47,7 @@ export class Wallets {
     let map = this.clients.get(id);
     if (!map) { map = new Map(); this.clients.set(id, map); }
     let d = map.get(chain);
-    if (!d) { d = { chain: config, clients: createClients(entry.key, config), walletId: id, journal: this.journal }; map.set(chain, d); }
+    if (!d) { d = { chain: config, clients: createClients(entry.key, config), walletId: id, journal: this.journal, execution: this.execution ? () => this.execution!(chain) : undefined }; map.set(chain, d); }
     return d;
   }
   depsFor(id: string): Map<string, TradeDeps> {
