@@ -22,14 +22,45 @@ manual_pids() {
   local candidate cwd
   for candidate in $(/usr/bin/pgrep -u "$(/usr/bin/id -u)" -f 'node .*src/index[.]ts' || true); do
     cwd=$(/usr/sbin/lsof -a -p "$candidate" -d cwd -Fn 2>/dev/null | /usr/bin/sed -n 's/^n//p' || true)
+    if [[ -z "$cwd" ]]; then
+      print -u2 '无法确认已有 Node 进程属于哪个项目，已停止操作，避免重复启动或结束其他项目。请让开发 Agent 检查权限。'
+      return 2
+    fi
     if [[ "$cwd" == "$PROJECT_DIR" ]]; then print "$candidate"; fi
   done
   return 0
 }
 
+stop_running() {
+    /bin/launchctl bootout "$SERVICE_TARGET" >/dev/null 2>&1 || true
+    local candidate cwd running
+    running=$(manual_pids) || return $?
+    for candidate in ${=running}; do
+      # 再次核对工作目录，避免退出与 PID 复用期间误杀其他项目。
+      cwd=$(/usr/sbin/lsof -a -p "$candidate" -d cwd -Fn 2>/dev/null | /usr/bin/sed -n 's/^n//p' || true)
+      [[ "$cwd" != "$PROJECT_DIR" ]] || /bin/kill -TERM "$candidate" 2>/dev/null || true
+    done
+    for attempt in {1..10}; do
+      running=$(manual_pids) || return $?
+      if [[ -z "$running" ]]; then
+        rm -f "$SERVICE_PID"
+        print '机器人已停止。停止期间，自动止盈止损和自动订单也不会执行。'
+        return 0
+      fi
+      /bin/sleep 1
+    done
+    print '停止请求已发出，但进程还没有退出。请稍后再试，暂时不要重复启动。'
+    return 1
+}
+
 case "${1:-}" in
-  start)
-    if [[ -n "$(manual_pids)" ]]; then
+  start|restart)
+    RUNNING_PIDS=$(manual_pids)
+    if [[ "${1:-}" == restart && -n "$RUNNING_PIDS" ]]; then
+      stop_running
+      RUNNING_PIDS=''
+    fi
+    if [[ -n "$RUNNING_PIDS" ]]; then
       print '机器人已经在运行，无需重复启动。要更新代码，请先双击「停止机器人」，再双击「启动机器人」。'
       exit 0
     fi
@@ -57,22 +88,7 @@ case "${1:-}" in
     print '后台进程已启动，但还没连上 Telegram。请检查代理软件；如果一直没回应，双击「停止机器人」后再启动。'
     ;;
   stop)
-    /bin/launchctl bootout "$SERVICE_TARGET" >/dev/null 2>&1 || true
-    for candidate in $(manual_pids); do
-      # 再次核对工作目录，避免退出与 PID 复用期间误杀其他项目。
-      cwd=$(/usr/sbin/lsof -a -p "$candidate" -d cwd -Fn 2>/dev/null | /usr/bin/sed -n 's/^n//p' || true)
-      [[ "$cwd" != "$PROJECT_DIR" ]] || /bin/kill -TERM "$candidate" 2>/dev/null || true
-    done
-    for attempt in {1..10}; do
-      if [[ -z "$(manual_pids)" ]]; then
-        rm -f "$SERVICE_PID"
-        print '机器人已停止。停止期间，自动止盈止损和自动订单也不会执行。'
-        exit 0
-      fi
-      /bin/sleep 1
-    done
-    print '停止请求已发出，但进程还没有退出。请稍后再试，暂时不要重复启动。'
-    exit 1
+    stop_running
     ;;
   *) print '请双击「启动机器人」或「停止机器人」。'; exit 1 ;;
 esac

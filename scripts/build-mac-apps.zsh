@@ -5,14 +5,16 @@ PROJECT_DIR="${0:A:h:h}"
 for action in start stop; do
   if [[ "$action" == start ]]; then
     APP_NAME='启动机器人'
+    SERVICE_ACTION='restart'
   else
     APP_NAME='停止机器人'
+    SERVICE_ACTION='stop'
   fi
   /usr/bin/osacompile -o "$PROJECT_DIR/$APP_NAME.app" <<APPLESCRIPT
 on run
   set appPath to POSIX path of (path to me)
   try
-    set resultText to do shell script "/bin/zsh " & quoted form of (appPath & "../scripts/bot-service.zsh") & " $action"
+    set resultText to do shell script "/bin/zsh " & quoted form of (appPath & "../scripts/bot-service.zsh") & " $SERVICE_ACTION"
     display dialog resultText with title "$APP_NAME" buttons {"好"} default button "好"
   on error errorText
     display dialog ("操作没有完成。" & return & errorText) with title "$APP_NAME" buttons {"好"} default button "好" with icon caution
