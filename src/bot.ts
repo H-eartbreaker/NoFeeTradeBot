@@ -6,6 +6,7 @@ import type { Address } from "viem";
 import type { Wallets } from "./wallets.ts";
 import { registerLogos } from "./logos.ts";
 import { registerWalletPanel } from "./wallet-panel.ts";
+import { installButtonIcons } from "./button-icons.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
 import type { RiskReport } from "./honeypot.ts";
@@ -59,6 +60,7 @@ function riskIdentity(report: RiskReport | null): string {
 export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: State, overrides: Partial<Services> = {}, wallets?: Wallets): Bot {
   const services = { ...defaults, ...overrides };
   const bot = new Bot(cfg.botToken, { client: { fetch: nativeFetch } });
+  installButtonIcons(bot);
   const activeKey = () => state.activeChain && deps.has(state.activeChain) ? state.activeChain : cfg.chains[0].key;
   const walletList = () => wallets?.list() ?? [{ id: "main", label: "主钱包", address: deps.get(cfg.chains[0].key)!.clients.account.address }];
   const activeWallet = () => walletList().some((p) => p.id === state.activeWallet) ? state.activeWallet : "main";
