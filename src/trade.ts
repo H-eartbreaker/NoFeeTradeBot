@@ -26,6 +26,10 @@ export class PendingTransactionError extends Error {
   hash?: Hex;
   constructor(hash?: Hex) { super(`交易提交结果待确认，请勿重复操作${hash ? `：${hash}` : "，请先核对钱包交易记录"}`); this.hash = hash; }
 }
+// 自动订单的限价未满足：不是失败，不计入失败次数，下一轮再检查
+export class LimitNotMetError extends Error {
+  constructor() { super("当前价格未达到限价，本轮不执行"); }
+}
 export class ConfirmedTransactionError extends Error {
   hash: Hex;
   constructor(hash: Hex) { super(`交易已在链上成功，但到账数据暂未读全，请勿重复操作：${hash}`); this.hash = hash; }
@@ -109,7 +113,7 @@ export async function ensureAllowance(d: TradeDeps, token: Address, spender: Add
 }
 
 // gate: 发送交易前必须通过的检查（如貔貅检测），和报价、生成交易数据并行进行以省时间
-export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps: number, gate?: Promise<unknown> | (() => Promise<unknown>), confirmation?: BuyConfirmation): Promise<BuyResult> {
+export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps: number, gate?: Promise<unknown> | (() => Promise<unknown>), confirmation?: BuyConfirmation, minimumOutput?: bigint): Promise<BuyResult> {
   return serial(async () => {
     if (amountWei <= 0n) throw new Error("买入金额必须大于 0");
     const validate = () => {
@@ -127,11 +131,13 @@ export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps
       const out = BigInt(route.routeSummary.amountOut);
       if (out <= 0n || BigInt(route.routeSummary.amountIn) !== amountWei) throw new Error("报价金额不正确，请重新报价");
       if (confirmation && out < confirmation.minimumOutput) throw new Error("价格已超出确认时的滑点范围，请重新确认");
+      if (minimumOutput !== undefined && out < minimumOutput) throw new LimitNotMetError();
       // 新报价也不能把确认页的最低可接受数量进一步降低。
       const effectiveSlippage = confirmation ? Math.min(slippageBps, Number((out - confirmation.minimumOutput) * 10_000n / out)) : slippageBps;
       const swap = await buildSwap(slug(d.chain), route, account.address, effectiveSlippage);
       if (swap.transactionValue !== amountWei || swap.routerAddress.toLowerCase() !== route.routerAddress.toLowerCase()) throw new Error("构建交易的金额或路由不一致，已拒绝发送");
       if (swap.amountOut <= 0n || (confirmation && swap.amountOut < confirmation.minimumOutput)) throw new Error("构建交易的输出低于确认范围，已拒绝发送");
+      if (minimumOutput !== undefined && swap.amountOut < minimumOutput) throw new LimitNotMetError();
       return swap;
     })();
     const [native, before, swap] = await Promise.all([
@@ -157,7 +163,7 @@ export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps
   }, queueKey(d));
 }
 
-export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: number, confirmation?: SellConfirmation): Promise<SellResult> {
+export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: number, confirmation?: SellConfirmation, minimumOutput?: bigint): Promise<SellResult> {
   return serial(async () => {
     if (!Number.isFinite(pct) || (!confirmation && pct < 0.01) || pct < 0 || pct > 100) throw new Error("卖出比例必须在 0.01～100% 之间");
     let remainingFee = confirmation?.maxGasCost ?? 0n;
@@ -186,6 +192,7 @@ export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: num
     const checkRoute = () => {
       if (BigInt(route.routeSummary.amountIn) !== amount || BigInt(route.routeSummary.amountOut) <= 0n) throw new Error("卖出报价金额不正确");
       if (confirmation && (routeIdentity(route) !== confirmation.route || BigInt(route.routeSummary.amountOut) < confirmation.minimumOutput)) throw new Error("交易池或价格超出确认范围，请重新确认卖出");
+      if (minimumOutput !== undefined && BigInt(route.routeSummary.amountOut) < minimumOutput) throw new LimitNotMetError();
     };
     checkRoute();
     const approveHash = await ensureAllowance(d, token, route.routerAddress, amount, confirmation ? { validate } : undefined);
@@ -201,6 +208,7 @@ export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: num
     ]);
     if (swap.transactionValue !== 0n || swap.routerAddress.toLowerCase() !== route.routerAddress.toLowerCase()) throw new Error("卖出交易金额或路由不一致，已拒绝发送");
     if (confirmation && (swap.amountOut < confirmation.minimumOutput || nativeBefore < confirmation.maxGasCost)) throw new Error("卖出输出低于确认下限或 Gas 余额不足");
+    if (minimumOutput !== undefined && swap.amountOut < minimumOutput) throw new LimitNotMetError();
     const { hash, receipt, journalId } = await sendAndWait(d, {
       to: swap.routerAddress,
       data: swap.data,

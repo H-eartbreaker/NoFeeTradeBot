@@ -9,6 +9,8 @@ import { Wallets } from "./wallets.ts";
 import { Journal } from "./journal.ts";
 import { applyJournalEntry, reconcile } from "./reconcile.ts";
 import { startBridgeMonitor } from "./bridge.ts";
+import { startOrderRunner } from "./order-runner.ts";
+import { OrderStore } from "./orders.ts";
 
 const cfg = loadConfig();
 enableKeepAlive([
@@ -22,7 +24,8 @@ const journal = new Journal("data/trades.jsonl", (e) => applyJournalEntry(state,
 const wallets = new Wallets(cfg.privateKey, cfg.chains, ".env", journal);
 const deps = wallets.depsFor("main");
 await reconcile(journal, state, (wallet, chain) => wallets.get(wallet, chain));
-const bot = createBot(cfg, deps, state, {}, wallets);
+const orders = new OrderStore("data/orders.json");
+const bot = createBot(cfg, deps, state, {}, wallets, orders);
 
 console.log(`链: ${cfg.chains.map((c) => c.label).join(", ")} | 钱包: ${deps.get(cfg.chains[0].key)!.clients.account.address}`);
 const timer = setTimeout(
@@ -37,16 +40,27 @@ await bot.start({
     void configureCommandMenu(bot.api, cfg.allowedUserId)
       .then(() => console.log("命令菜单已更新"))
       .catch(() => console.error("命令菜单更新失败，下次启动时会重试"));
+    const notify = (html: string) =>
+      bot.api
+        .sendMessage(cfg.allowedUserId, html, { parse_mode: "HTML", link_preview_options: { is_disabled: true } })
+        .catch((e) => console.log("通知发送失败:", e instanceof Error ? e.message : e));
     startMonitor({
       state,
       deps,
       getDeps: (wallet, chain) => wallets.get(wallet, chain),
       onTick: () => reconcile(journal, state, (wallet, chain) => wallets.get(wallet, chain)),
       slippageBps: (chain) => tradingSettings(state, deps.get(chain)!.chain, cfg.defaultSlippageBps).sellSlippageBps,
-      notify: (html) =>
-        bot.api
-          .sendMessage(cfg.allowedUserId, html, { parse_mode: "HTML", link_preview_options: { is_disabled: true } })
-          .catch((e) => console.log("通知发送失败:", e instanceof Error ? e.message : e)),
+      notify,
+    });
+    startOrderRunner({
+      store: orders,
+      state,
+      getDeps: (wallet, chain) => wallets.get(wallet, chain),
+      slippageBps: (chain, side) => {
+        const t = tradingSettings(state, deps.get(chain)!.chain, cfg.defaultSlippageBps);
+        return side === "buy" ? t.buySlippageBps : t.sellSlippageBps;
+      },
+      notify,
     });
   },
 });

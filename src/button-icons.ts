@@ -33,6 +33,12 @@ export function buttonIcon(text: string, data?: string): string | null {
   if (/^custom:/.test(data)) return "✏️";
   if (/^(confirm:|funds:confirm:|logos:save:|reset:|quick:)/.test(data)) return "✅";
   if (/^(cancel:|input:cancel|wallet:cancel|logos:cancel|funds:cancel)/.test(data)) return "✖️";
+  if (/^ord:list:/.test(data)) return "📋";
+  if (/^ord:m:/.test(data)) return "🤖";
+  if (/^ord:k:/.test(data)) return "📝";
+  if (/^ord:ok:/.test(data)) return "✅";
+  if (/^ord:(no:|cancel$|x:)/.test(data)) return "✖️";
+  if (/^ord:t:/.test(data)) return "⏯️";
   if (/^t:/.test(data)) return "🎯";
   if (/^r:/.test(data)) return "🔄";
   if (/^pools:/.test(data)) return "💧";

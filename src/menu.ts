@@ -14,6 +14,7 @@ export const commands = [
   { command: "logos", description: "链 Logo 显示和导入" },
   { command: "slippage", description: "设置滑点，点击后直接发送百分比" },
   { command: "tpsl", description: "设置止盈止损，点击后直接回复数字" },
+  { command: "orders", description: "自动订单：限价、市值、定投和订单中心" },
   { command: "help", description: "查看使用说明" },
 ];
 

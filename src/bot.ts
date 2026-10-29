@@ -13,6 +13,8 @@ import { calculatePnl, floatingPnl } from "./pnl.ts";
 import { hasRule, parseRule } from "./auto-rules.ts";
 import type { Tier } from "./auto-rules.ts";
 import { registerApprovals } from "./approvals-panel.ts";
+import { registerOrders } from "./orders-panel.ts";
+import { OrderStore } from "./orders.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
 import type { RiskReport } from "./honeypot.ts";
@@ -65,7 +67,7 @@ function riskIdentity(report: RiskReport | null): string {
   return JSON.stringify(report ? [report.isHoneypot, report.buyTax, report.sellTax] : null);
 }
 
-export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: State, overrides: Partial<Services> = {}, wallets?: Wallets): Bot {
+export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: State, overrides: Partial<Services> = {}, wallets?: Wallets, orders: OrderStore = new OrderStore("data/orders.json")): Bot {
   const services = { ...defaults, ...overrides };
   const bot = new Bot(cfg.botToken, { client: { fetch: nativeFetch } });
   installButtonIcons(bot);
@@ -95,12 +97,14 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   clearPositions = registerPositions(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps,
     slippage: (key) => settings(key).sellSlippageBps, refresh: refreshCard }, { readToken: services.readToken, getRoute: services.getRoute, sell: services.sell });
   clearFunds = registerFundsPanel(bot, { chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps, slippage: (key) => settings(key).buySlippageBps });
+  registerOrders(bot, { store: orders, state, chains: cfg.chains, logos, deps: getDeps,
+    slippage: (key, side) => (side === "buy" ? settings(key).buySlippageBps : settings(key).sellSlippageBps) });
   registerWalletPanel(bot, { state, chains: cfg.chains, logos, directory: wallets, list: walletList, activeWallet, activeChain: activeKey,
     deps: getDeps, readToken: services.readToken, onSwitch: () => { input = null; pendingBuys.clear(); } });
   const mainKeyboard = () => new InlineKeyboard().text("买入 / 查看代币", "nav:buy").text("持仓与盈亏", `positions:${activeKey()}:${activeWallet()}:0`).row()
     .text("钱包管理", "wallet:page:0").text("余额", "nav:balance").row()
     .text("交易记录", `history:${activeWallet()}:${activeKey()}:0`).text("授权管理", `auth:list:${activeKey()}:${activeWallet()}:0`).row()
-    .text("转账 / 兑换 / 跨链", "funds:menu").row()
+    .text("转账 / 兑换 / 跨链", "funds:menu").text("自动订单", "ord:list:0").row()
     .text("切换交易链", "nav:chain").text("设置", "nav:settings").row().text("止盈止损", "nav:tpsl").text("使用说明", "nav:help");
   const backKeyboard = () => new InlineKeyboard().text("返回首页", "nav:start");
   function invalidate(chain: string) {
@@ -237,6 +241,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       kb.text("卖回本金", `exit:p:${chain.key}:${walletId(d)}:${token}`).text("按金额卖出", `exit:a:${chain.key}:${walletId(d)}:${token}`).row();
     }
     if (pos) kb.text(hasRule(pos) ? "关闭止盈止损" : "开启止盈止损", `t:${chain.key}:${walletId(d)}:${token}`).row();
+    kb.text("自动订单", `ord:m:${chain.key}:${walletId(d)}:${token.toLowerCase()}`).row();
     kb.text("刷新", `r:${chain.key}:${walletId(d)}:${token}`).text("交易设置", `settings:${chain.key}`).row();
     if (state.display.showExplorer) kb.url("区块浏览器", chain.explorerTx(token).replace("/tx/", "/address/"));
     if (state.display.showChart) kb.url("搜索图表", `https://dexscreener.com/search?q=${token}`);
