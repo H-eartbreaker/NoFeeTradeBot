@@ -1,5 +1,6 @@
 import { signature } from "@solana/kit";
 import type { Journal, JournalEntry } from "./journal.ts";
+import { SOL_MINT } from "./sol-chain.ts";
 import type { SolRpc } from "./sol-chain.ts";
 
 type TokenBalance = { accountIndex: number | bigint; mint: string; owner?: string; uiTokenAmount: { amount: string } };
@@ -11,7 +12,7 @@ export type SolReceipt = {
 const key = (k: string | { pubkey: string }) => typeof k === "string" ? k : k.pubkey;
 
 // 将钱包及其代币账户的 SOL 变化相加，抵消新建/关闭账户的租金变化；不把报价当实际成交。
-export function solReceiptPatch(receipt: SolReceipt, entry: Pick<JournalEntry, "owner" | "token" | "kind" | "tipLamports">): Partial<JournalEntry> {
+export function solReceiptPatch(receipt: SolReceipt, entry: Pick<JournalEntry, "owner" | "token" | "kind" | "tipLamports" | "outputToken">): Partial<JournalEntry> {
   const m = receipt.meta;
   if (!m || !entry.owner) throw new Error("缺少交易明细，尚不能核算成交");
   const index = receipt.transaction.message.accountKeys.findIndex((k) => key(k) === entry.owner);
@@ -35,6 +36,13 @@ export function solReceiptPatch(receipt: SolReceipt, entry: Pick<JournalEntry, "
     const output = entry.kind === "buy" ? delta : nativeDelta + fee + tip;
     if (input <= 0n || output < 0n) throw new Error("成交数量与方向不符，需要人工核对");
     Object.assign(patch, { amountIn: input.toString(), amountOut: output.toString(), balanceBefore: before.toString(), amountOutEstimated: false });
+  }
+  if (entry.kind === "swap") {
+    const deltaOf = (mint: string | undefined) => post.filter((b) => b.owner === entry.owner && b.mint === mint).reduce((sum, b) => sum + BigInt(b.uiTokenAmount.amount), 0n) - pre.filter((b) => b.owner === entry.owner && b.mint === mint).reduce((sum, b) => sum + BigInt(b.uiTokenAmount.amount), 0n);
+    const input = entry.token === SOL_MINT ? -nativeDelta - fee - tip : -deltaOf(entry.token);
+    const output = entry.outputToken === SOL_MINT ? nativeDelta + fee + tip : deltaOf(entry.outputToken);
+    if (input <= 0n || output < 0n) throw new Error("兑换成交方向不符，需要核对");
+    Object.assign(patch, { amountIn: input.toString(), amountOut: output.toString(), amountOutEstimated: false });
   }
   return patch;
 }

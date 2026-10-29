@@ -11,6 +11,7 @@ import { holdings, isSolanaAddress, mintInfo, openRpc, solBalance, SOL_DECIMALS,
 import type { MintInfo, SolRpc, TokenMeta, Quote } from "./sol-chain.ts";
 import { buySol, serial, SolPendingError, sellToken, SolTradeError } from "./sol-trade.ts";
 import type { State } from "./state.ts";
+import { registerSolFinance } from "./sol-finance-panel.ts";
 import type { Journal } from "./journal.ts";
 import { errMsg, escapeHtml, fmtUnits, parseSlippageInput } from "./util.ts";
 
@@ -282,6 +283,8 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
     }
   }
 
+  const finance = o.journal ? registerSolFinance(bot, { state: o.state, rpc, wallet, journal: o.journal }) : undefined;
+
   // 先处理统一导航，再让 EVM 面板处理各自的链。Solana 不进入 viem 路径。
   bot.use(async (ctx, next) => {
     const data = ctx.callbackQuery?.data ?? "";
@@ -298,8 +301,15 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
       if (["buy", "wallets", "deposit", "positions"].includes(route ?? "")) {
         if (ctx.callbackQuery) await ctx.answerCallbackQuery();
         if (route === "buy") await reply(ctx, "当前链：Solana\n直接发送要交易的代币合约地址。", homeKb());
-        else if (route === "positions") await hold(ctx);
+        else if (route === "positions") { if (finance) await finance.positions(ctx); else await hold(ctx); }
         else await walletPage(ctx);
+        return;
+      }
+      if (finance && (data.startsWith("funds:") || command === "funds" || data.startsWith("history:") || command === "history" || data.startsWith("pcard:"))) {
+        if (ctx.callbackQuery) await ctx.answerCallbackQuery();
+        if (data.startsWith("history:") || command === "history") await finance.history(ctx);
+        else if (data.startsWith("pcard:")) await finance.positions(ctx, true);
+        else await finance.funds(ctx);
         return;
       }
       if (data === "nav:tpsl" || /^(funds:|auth:|history:|ord:|trk:|pcard:|exit:|risk:sol)/.test(data)
