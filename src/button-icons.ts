@@ -11,6 +11,7 @@ export function buttonIcon(text: string, data?: string): string | null {
   const navigation: Record<string, string> = { "nav:start": "🏠", "nav:buy": "🛒", "nav:balance": "📊", "nav:chain": "🔗", "nav:settings": "⚙️", "nav:tpsl": "🎯", "nav:help": "📖" };
   if (navigation[data]) return navigation[data];
   if (/^wallet:(page|view):/.test(data)) return "👛";
+  if (/^trk:/.test(data)) return "👀";
   if (/^wallet:deposit:/.test(data)) return "📥";
   if (data === "wallet:create") return "➕";
   if (data === "wallet:import") return "📂";

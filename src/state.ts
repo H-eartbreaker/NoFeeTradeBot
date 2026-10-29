@@ -19,6 +19,7 @@ export type ChainSettings = {
   risk?: RiskFilter;
 };
 export type Blacklist = { tokens: string[]; developers: string[] };
+export type TrackedWallet = { address: string; label: string };
 export type DisplaySettings = { showChart: boolean; showExplorer: boolean; timeZone: string; hour12: boolean };
 export type ChainLogo = { chain?: string; native?: string };
 const defaultDisplay = (): DisplaySettings => ({ showChart: true, showExplorer: true, timeZone: "Asia/Shanghai", hour12: false });
@@ -36,6 +37,7 @@ type StateData = {
   logos?: { enabled: boolean; chains: Record<string, ChainLogo> };
   autoPaused?: boolean;
   blacklist: Blacklist;
+  tracked?: TrackedWallet[];
 };
 
 const legacyTiers = (tp: number | null): Tier[] => (tp === null ? [] : [{ at: tp, pct: 100 }]);
@@ -52,7 +54,7 @@ export class State {
 
   constructor(file: string) {
     this.file = file;
-    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {}, chainSettings: {}, display: defaultDisplay(), activeWallet: "main", walletTokens: {}, appliedTransactions: [], autoPaused: false, blacklist: { tokens: [], developers: [] } };
+    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {}, chainSettings: {}, display: defaultDisplay(), activeWallet: "main", walletTokens: {}, appliedTransactions: [], autoPaused: false, blacklist: { tokens: [], developers: [] }, tracked: [] };
     try {
       const p = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
       // 旧版本的 tokens 是数组（只有 BSC）
@@ -71,6 +73,7 @@ export class State {
         logos: p.logos as StateData["logos"],
         autoPaused: p.autoPaused === true,
         blacklist: { tokens: [], developers: [], ...(p.blacklist as Partial<Blacklist> | undefined) },
+        tracked: Array.isArray(p.tracked) ? (p.tracked as TrackedWallet[]) : [],
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("本地状态文件无法读取或已损坏，请保留原文件并检查，未自动改写");
@@ -115,6 +118,15 @@ export class State {
     const next = list.filter((x) => x !== key);
     if (on) next.push(key);
     if (kind === "token") this.data.blacklist.tokens = next; else this.data.blacklist.developers = next;
+    this.save();
+  }
+
+  trackedWallets(): TrackedWallet[] {
+    return structuredClone(this.data.tracked ?? []);
+  }
+
+  setTracked(list: TrackedWallet[]): void {
+    this.data.tracked = structuredClone(list);
     this.save();
   }
 

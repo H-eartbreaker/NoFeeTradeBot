@@ -15,6 +15,7 @@ export const commands = [
   { command: "slippage", description: "设置滑点，点击后直接发送百分比" },
   { command: "tpsl", description: "设置止盈止损，点击后直接回复数字" },
   { command: "orders", description: "自动订单：限价、市值、定投和订单中心" },
+  { command: "track", description: "追踪钱包：只记录地址和备注，不自动交易" },
   { command: "help", description: "查看使用说明" },
 ];
 
