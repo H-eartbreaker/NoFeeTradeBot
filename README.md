@@ -21,7 +21,7 @@ A Telegram trading bot that runs on your own computer. Send a token contract add
 
 ## About
 
-The bot runs locally, with your own Telegram account and your own wallet. It is not a hosted platform and charges no platform fee.
+The bot runs locally, with your own Telegram account and your own wallet. It is not a hosted platform: your private key and funds stay in your own computer and wallet.
 
 - **Single user**: Only the Telegram user ID set as `ALLOWED_USER_ID` in `.env` can operate it. Messages and button callbacks from anyone else are rejected.
 - **Keys stay local**: The private key is stored in the project's `.env` file (permissions 600). It is not sent to chats or logs.
@@ -168,8 +168,8 @@ A: If you enabled a risk check in the buy settings (such as tax or honeypot chec
 **Q: The bot doesn't reply in Telegram. What should I do?**
 A: Check the `npm start` output for connection errors. If your network needs a proxy, set `HTTPS_PROXY` in `.env` and restart the bot.
 
-**Q: Is there a platform fee or subscription?**
-A: No. You only pay on-chain gas and DEX or router fees, plus cross-chain fees or a Jito tip if you enable them.
+**Q: What fees do trades involve?**
+A: On-chain gas, DEX or router trading fees, cross-chain service fees, and a Jito tip you set yourself if you enable Jito. Actual fees are shown on the confirmation page and in on-chain records.
 
 **Q: Does it support copy trading?**
 A: Not yet. `/track` only stores addresses and notes. Planned wallet-monitoring copy trading is not implemented.
