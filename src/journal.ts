@@ -8,6 +8,7 @@ export type JournalEntry = {
   id: string; at: string; chain: string; wallet: string; kind: JournalKind;
   token?: string; hash?: Hex; status: "preparing" | "pending" | "confirmed" | "failed" | "unknown";
   signature?: string; owner?: string; lastValidBlockHeight?: string; tipLamports?: string;
+  orderId?: string; autoProgress?: { done: number; peak: string };
   amountIn?: string; amountOut?: string; gasCost?: string; feeComplete?: boolean; recipient?: string;
   destinationChain?: string; requestId?: string; bridgeStatus?: string; decimals?: number; symbol?: string;
   sellPct?: number;

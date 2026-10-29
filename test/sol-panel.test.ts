@@ -123,7 +123,8 @@ test("Solana 报价等待时切链不会迟到创建确认；旧金额按钮不�
 test("Solana 钱包/充值/持仓共用入口，未支持功能不落到 EVM，错误地址不误交易", async (t) => {
   const f = fixture(t); await f.callback("c:sol"); await f.send("/wallets"); assert.match(f.last(), /Solana 主钱包/);
   await f.send("/deposit"); assert.match(f.last(), new RegExp(OWNER)); await f.send("/positions"); assert.match(f.last(), /USDC/);
-  for (const command of ["/orders", "/funds", "/history", "/approvals", "/track", "/tpsl"]) { await f.send(command); assert.match(f.last(), /尚未接入/); }
+  await f.send("/orders"); assert.match(f.last(), /自动订单/);
+  for (const command of ["/funds", "/history", "/approvals", "/track", "/tpsl"]) { await f.send(command); assert.match(f.last(), /尚未接入/); }
   await f.send(EVM); assert.match(f.last(), /不是有效的 Solana/); assert.equal(f.counts().evmTrades, 0);
   f.setWallet(false); await f.send("/wallets"); assert.equal(f.button("sol:gen"), "sol:gen"); await f.callback("sol:gen"); assert.equal(f.counts().generated, 0);
 });

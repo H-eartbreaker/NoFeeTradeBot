@@ -10,6 +10,9 @@ import { Journal } from "./journal.ts";
 import { applyJournalEntry, reconcile } from "./reconcile.ts";
 import { startBridgeMonitor } from "./bridge.ts";
 import { startOrderRunner } from "./order-runner.ts";
+import { SolanaWallet } from "./sol-wallet.ts";
+import { openRpc } from "./sol-chain.ts";
+import { startSolAutomation } from "./sol-automation.ts";
 import { OrderStore } from "./orders.ts";
 
 const cfg = loadConfig();
@@ -27,7 +30,9 @@ const wallets = new Wallets(cfg.privateKey, cfg.chains, ".env", journal, (chain)
 const deps = wallets.depsFor("main");
 await reconcile(journal, state, (wallet, chain) => wallets.get(wallet, chain));
 const orders = new OrderStore("data/orders.json");
-const bot = createBot(cfg, deps, state, {}, wallets, orders);
+const solWallet = new SolanaWallet();
+const solRpc = openRpc(cfg.solanaRpcUrl);
+const bot = createBot(cfg, deps, state, {}, wallets, orders, { wallet: () => solWallet, openRpc: () => solRpc });
 
 console.log(`链: ${cfg.chains.map((c) => c.label).join(", ")} | 钱包: ${deps.get(cfg.chains[0].key)!.clients.account.address}`);
 const timer = setTimeout(
@@ -54,6 +59,7 @@ await bot.start({
       slippageBps: (chain) => tradingSettings(state, deps.get(chain)!.chain, cfg.defaultSlippageBps).sellSlippageBps,
       notify,
     });
+    startSolAutomation({ state, store: orders, journal, rpc: solRpc, wallet: solWallet, notify });
     startOrderRunner({
       store: orders,
       state,

@@ -8,7 +8,8 @@ export function applyJournalEntry(state: State, e: JournalEntry): void {
   if (e.status !== "confirmed" || !e.token || !id) return;
   if (e.kind === "buy" && e.amountIn) state.recordBuy(e.chain, e.token, BigInt(e.amountIn), e.wallet, id);
   if (e.kind === "sell" && e.sellPct !== undefined) state.recordSell(e.chain, e.token, e.sellPct, e.wallet, id,
-    e.balanceBefore && e.amountIn ? { sold: BigInt(e.amountIn), balance: BigInt(e.balanceBefore) } : undefined);
+    e.balanceBefore && e.amountIn ? { sold: BigInt(e.amountIn), balance: BigInt(e.balanceBefore) } : undefined,
+    e.autoProgress ? { done: e.autoProgress.done, peak: BigInt(e.autoProgress.peak) } : undefined);
 }
 
 // 只读查询已广播交易；不重新签名或广播。hash 去重让 UI 与恢复流程可以安全地同时记账。

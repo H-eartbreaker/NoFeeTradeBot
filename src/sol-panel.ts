@@ -11,6 +11,7 @@ import { holdings, isSolanaAddress, mintInfo, openRpc, solBalance, SOL_DECIMALS,
 import type { MintInfo, SolRpc, TokenMeta, Quote } from "./sol-chain.ts";
 import { buySol, serial, SolPendingError, sellToken, SolTradeError } from "./sol-trade.ts";
 import type { State } from "./state.ts";
+import { registerSolRules } from "./sol-rules-panel.ts";
 import { registerSolFinance } from "./sol-finance-panel.ts";
 import type { Journal } from "./journal.ts";
 import { errMsg, escapeHtml, fmtUnits, parseSlippageInput } from "./util.ts";
@@ -135,7 +136,7 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
     await reply(ctx, ["<b>交易设置</b>", `正在设置：${o.logos.chain(SOLANA)}`,
       `买入按钮：${s.buyAmounts.map((a) => formatUnits(a, 9)).join(" / ")} SOL`,
       `卖出按钮：${s.sellPercentages.join("% / ")}%`, "", "交易参数按链保存；显示和时间设置对所有链生效。",
-      "Solana 的自动订单、止盈止损和税费过滤尚未接入。"].join("\n"), kb);
+      "Solana 自动规则需单独确认开启；貔貅和税费检测仍未知。"].join("\n"), kb);
   }
 
   async function hold(ctx: Context) {
@@ -186,6 +187,7 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
       for (const pct of s.sellPercentages) kb.text(`卖出 ${pct}%`, `sol:s:${mint}:${pct}`);
       kb.row().text("自定义卖出", `sol:cs:${mint}`).row();
     }
+    kb.text("自动订单", `ord:m:sol:main:${mint}`).text("止盈止损", `sauto:rule:${mint}`).row();
     kb.text("刷新", `sol:card:${mint}`).text("持仓", "sol:hold").row().text("返回首页", "nav:start");
     if (o.state.display.showExplorer) kb.url("区块浏览器", `https://solscan.io/token/${mint}`).row();
     if (o.state.display.showChart) kb.url("搜索图表", `https://dexscreener.com/solana/${mint}`).row();
@@ -283,6 +285,7 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
     }
   }
 
+  const solRules = o.journal ? registerSolRules(bot, o.state) : undefined;
   const finance = o.journal ? registerSolFinance(bot, { state: o.state, rpc, wallet, journal: o.journal }) : undefined;
 
   // 先处理统一导航，再让 EVM 面板处理各自的链。Solana 不进入 viem 路径。
@@ -305,6 +308,7 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
         else await walletPage(ctx);
         return;
       }
+      if (solRules && (data === "nav:tpsl" || command === "tpsl")) { if (ctx.callbackQuery) await ctx.answerCallbackQuery(); await solRules(ctx); return; }
       if (finance && (data.startsWith("funds:") || command === "funds" || data.startsWith("history:") || command === "history" || data.startsWith("pcard:"))) {
         if (ctx.callbackQuery) await ctx.answerCallbackQuery();
         if (data.startsWith("history:") || command === "history") await finance.history(ctx);
@@ -312,8 +316,8 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
         else await finance.funds(ctx);
         return;
       }
-      if (data === "nav:tpsl" || /^(funds:|auth:|history:|ord:|trk:|pcard:|exit:|risk:sol)/.test(data)
-          || ["tpsl", "funds", "approvals", "history", "orders", "track"].includes(command ?? "")) {
+      if (data === "nav:tpsl" || /^(funds:|auth:|history:|trk:|pcard:|exit:|risk:sol)/.test(data)
+          || ["tpsl", "funds", "approvals", "history", "track"].includes(command ?? "")) {
         if (ctx.callbackQuery) await ctx.answerCallbackQuery();
         await reply(ctx, "Solana 目前支持买卖、余额和持仓，这项功能尚未接入。请切换交易链后使用其他链的功能。", homeKb()); return;
       }
@@ -453,5 +457,5 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
     await next();
   });
 
-  return { clear: invalidate, home, settings, balanceSummary };
+  return { clear: invalidate, home, settings, balanceSummary, market: { rpc, wallet } };
 }

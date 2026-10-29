@@ -1,3 +1,6 @@
+import { solOrderMarket, SOL_ORDER_SCALE } from "./sol-order-market.ts";
+import type { SolMarket } from "./sol-order-market.ts";
+import { SOLANA } from "./sol-settings.ts";
 import { randomBytes } from "node:crypto";
 import { InlineKeyboard } from "grammy";
 import type { Bot, Context } from "grammy";
@@ -17,6 +20,7 @@ import { errMsg, escapeHtml, fmtUnits } from "./util.ts";
 const defaults = { readToken, getRoute, supplyOf };
 export type OrdersServices = typeof defaults;
 type Options = {
+  sol?: SolMarket;
   store: OrderStore;
   state: State;
   chains: ChainConfig[];
@@ -25,7 +29,7 @@ type Options = {
   slippage: (chain: string, side: "buy" | "sell") => number;
 };
 type Short = "lb" | "ls" | "mb" | "ms" | "dca";
-type Input = { kind: OrderKind; chain: string; wallet: string; token: Address; expires: number };
+type Input = { kind: OrderKind; chain: string; wallet: string; token: string; expires: number };
 type Parsed = { target?: bigint; amount?: bigint; pct?: number; intervalMs?: number; runs?: number };
 type Pending = { order: Order; expires: number };
 
@@ -46,8 +50,8 @@ export function registerOrders(bot: Bot, o: Options, overrides: Partial<OrdersSe
   let input: Input | null = null;
   const pendings = new Map<string, Pending>();
   const clear = () => { input = null; pendings.clear(); };
-  const nativeOf = (chain: string) => o.chains.find((c) => c.key === chain)?.nativeSymbol ?? "";
-  const chainLabel = (chain: string) => { const c = o.chains.find((x) => x.key === chain); return c ? o.logos.chain(c) : escapeHtml(chain); };
+  const nativeOf = (chain: string) => [...o.chains, SOLANA].find((c) => c.key === chain)?.nativeSymbol ?? "";
+  const chainLabel = (chain: string) => { const c = [...o.chains, SOLANA].find((x) => x.key === chain); return c ? o.logos.chain(c) : escapeHtml(chain); };
   const time = (t: number) => new Intl.DateTimeFormat("zh-CN", { timeZone: o.state.display.timeZone, hour12: o.state.display.hour12, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(t));
   const reply = (ctx: Context, text: string, kb?: InlineKeyboard) => ctx.reply(text, { ...HTML, reply_markup: kb });
   const backKb = () => new InlineKeyboard().text("自动订单", "ord:list:0").text("返回首页", "nav:start");
@@ -111,19 +115,28 @@ export function registerOrders(bot: Bot, o: Options, overrides: Partial<OrdersSe
       "确认前不会发送交易；确认后可在订单中心暂停或取消。"].join("\n"), kb);
   }
 
-  async function prompt(ctx: Context, kind: OrderKind, chain: string, wallet: string, token: Address) {
-    const d = o.deps(chain, wallet);
-    if (!d) return reply(ctx, "这条链或钱包未启用，请重新选择。", backKb());
-    const info = await s.readToken(d.clients, token);
-    if (!info) return reply(ctx, "这个地址在本链上读取不到代币信息，请核对链和 CA。", backKb());
+  async function market(chain: string, wallet: string, token: string, buyAmount: bigint | null) {
+    if (chain === "sol") {
+      if (!o.sol || wallet !== "main") throw new Error("Solana 钱包未启用");
+      return solOrderMarket(o.sol, token, buyAmount);
+    }
+    const d = o.deps(chain, wallet); if (!d) throw new Error("这条链或钱包未启用");
+    const info = await s.readToken(d.clients, token as Address); if (!info) throw new Error("读取代币信息失败");
+    return { info, owner: d.clients.account.address, native: await d.clients.publicClient.getBalance({ address: d.clients.account.address }), reserve: d.chain.gasReserve,
+      symbol: d.chain.nativeSymbol, price: () => priceOf(d, token as Address, info.decimals, buyAmount, s), supply: () => s.supplyOf(d, token as Address) };
+  }
+
+  async function prompt(ctx: Context, kind: OrderKind, chain: string, wallet: string, token: string) {
+    const m = await market(chain, wallet, token, isBuyKind(kind) ? (chain === "sol" ? 10_000_000n * SOL_ORDER_SCALE : o.deps(chain, wallet)!.chain.buyAmounts[0]) : null);
+    const info = m.info;
     if (!isBuyKind(kind) && info.balance === 0n) return reply(ctx, "当前钱包没有这个代币的持仓，无法创建卖出订单。请先买入。", backKb());
     let current = "";
     if (kind !== "dca") {
       try {
-        const price = await priceOf(d, token, info.decimals, isBuyKind(kind) ? d.chain.buyAmounts[0] : null, s);
-        const supply = isMcapKind(kind) ? await s.supplyOf(d, token) : 0n;
+        const price = await m.price();
+        const supply = isMcapKind(kind) ? await m.supply() : 0n;
         const value = metricValue(kind, price, supply, info.decimals);
-        current = `当前${isMcapKind(kind) ? "市值" : "单价"}约 ${fmtUnits(value, 18, isMcapKind(kind) ? 6 : 12)} ${d.chain.nativeSymbol}`;
+        current = `当前${isMcapKind(kind) ? "市值" : "单价"}约 ${fmtUnits(value, 18, isMcapKind(kind) ? 6 : 12)} ${m.symbol}`;
       } catch {
         current = "当前报价暂不可用，确认时会重新核对";
       }
@@ -154,32 +167,31 @@ export function registerOrders(bot: Bot, o: Options, overrides: Partial<OrdersSe
   }
 
   async function preview(ctx: Context, p: Input, parsed: Parsed) {
-    const d = o.deps(p.chain, p.wallet);
-    if (!d) throw new Error("这条链或钱包已不可用");
-    const info = await s.readToken(d.clients, p.token);
-    if (!info) throw new Error("读取代币信息失败，请核对 CA");
-    const sym = d.chain.nativeSymbol;
+    const m = await market(p.chain, p.wallet, p.token, isBuyKind(p.kind) ? parsed.amount! : null);
+    const info = m.info;
+    const sym = m.symbol;
+    if (p.chain === "sol" && parsed.amount && parsed.amount % SOL_ORDER_SCALE !== 0n) throw new Error("Solana 买入金额最多 9 位小数");
     const now = Date.now();
     const kind = p.kind;
-    const native = await d.clients.publicClient.getBalance({ address: d.clients.account.address });
-    const lines = ["<b>确认自动订单</b>", `类型：${KIND_LABEL[kind]}`, `链：${chainLabel(p.chain)}`, `钱包：<code>${d.clients.account.address}</code>`,
+    const native = m.native;
+    const lines = ["<b>确认自动订单</b>", `类型：${KIND_LABEL[kind]}`, `链：${chainLabel(p.chain)}`, `钱包：<code>${m.owner}</code>`,
       `代币：${escapeHtml(info.symbol.slice(0, 40))}（${escapeHtml(info.name.slice(0, 100))}）`, `CA：<code>${p.token}</code>`];
-    const base = { id: randomBytes(6).toString("hex"), kind, wallet: p.wallet, chain: p.chain, token: p.token.toLowerCase(), symbol: info.symbol.slice(0, 40), decimals: info.decimals,
+    const base = { id: randomBytes(6).toString("hex"), kind, wallet: p.wallet, chain: p.chain, token: p.chain === "sol" ? p.token : p.token.toLowerCase(), symbol: info.symbol.slice(0, 40), decimals: info.decimals,
       status: "active" as const, createdAt: now, spent: "0", runs: 0, skipped: 0, failures: 0, note: "", lastHash: null };
     let order: Order;
 
     if (kind === "dca") {
       const amount = parsed.amount!; const interval = parsed.intervalMs!; const runs = parsed.runs!;
-      if (native < amount + d.chain.gasReserve) throw new Error(`${sym} 余额不足（首次买入金额 + 少量 gas）`);
+      if (native < amount + m.reserve) throw new Error(`${sym} 余额不足（首次买入金额 + 少量 gas）`);
       lines.push(`每次买入：${fmtUnits(amount, 18, 6)} ${sym}，间隔 ${interval / MINUTE} 分钟，共 ${runs} 次`,
         `总预算：约 ${fmtUnits(amount * BigInt(runs), 18, 6)} ${sym}（不含 gas）`,
         `第一次执行：${time(now + interval)}`, "错过的次数不补买；余额不足时会连续失败并暂停。");
       order = { ...base, expiresAt: null, target: null, amount: amount.toString(), pct: null, intervalMs: interval, runsLeft: runs, nextRunAt: now + interval };
     } else if (isBuyKind(kind)) {
       const amount = parsed.amount!; const target = parsed.target!;
-      if (native < amount + d.chain.gasReserve) throw new Error(`${sym} 余额不足（需要买入金额 + 少量 gas）`);
-      const supply = isMcapKind(kind) ? await s.supplyOf(d, p.token) : 0n;
-      const price = await priceOf(d, p.token, info.decimals, amount, s);
+      if (native < amount + m.reserve) throw new Error(`${sym} 余额不足（需要买入金额 + 少量 gas）`);
+      const supply = isMcapKind(kind) ? await m.supply() : 0n;
+      const price = await m.price();
       const current = metricValue(kind, price, supply, info.decimals);
       if (triggered(kind, current, target)) throw new Error("当前价已达到或低于目标价，会立即买入。请调低目标价，或直接用买入按钮。");
       const floor = minimumTokensOut(amount, targetPrice(kind, target, supply, info.decimals), info.decimals);
@@ -192,8 +204,8 @@ export function registerOrders(bot: Bot, o: Options, overrides: Partial<OrdersSe
     } else {
       const pct = parsed.pct!; const target = parsed.target!;
       if (info.balance === 0n) throw new Error("没有这个代币的持仓，无法创建卖出订单");
-      const supply = isMcapKind(kind) ? await s.supplyOf(d, p.token) : 0n;
-      const price = await priceOf(d, p.token, info.decimals, null, s);
+      const supply = isMcapKind(kind) ? await m.supply() : 0n;
+      const price = await m.price();
       const current = metricValue(kind, price, supply, info.decimals);
       if (triggered(kind, current, target)) throw new Error("当前价已达到或高于目标价，会立即卖出。请调高目标价，或直接用卖出按钮。");
       const sold = (info.balance * BigInt(Math.round(pct * 100))) / 10_000n;
@@ -209,7 +221,7 @@ export function registerOrders(bot: Bot, o: Options, overrides: Partial<OrdersSe
     const side = isBuyKind(kind) ? "buy" : "sell";
     lines.push(`滑点：${side === "buy" ? "买入" : "卖出"} ${o.slippage(p.chain, side) / 100}%`,
       `有效期：${order.expiresAt === null ? "无，取消后停止" : "7 天，未触发则自动取消"}`,
-      "", "确认后自动生效。执行前会检查：是否过期、持仓、貔貅盘、限价、余额和滑点。",
+      "", "确认后自动生效。执行前会检查有效期、持仓、报价、余额和滑点。Solana 貔貅和税费检测未知，不能当成安全。",
       "全局暂停开启时不会执行。确认页 60 秒内有效；确认前不会发送任何交易。");
 
     const token = randomBytes(8).toString("hex");
@@ -236,10 +248,10 @@ export function registerOrders(bot: Bot, o: Options, overrides: Partial<OrdersSe
 
   bot.command("orders", (ctx) => list(ctx, 0));
   bot.callbackQuery(/^ord:list:(\d{1,4})$/, async (ctx) => { clear(); await ctx.answerCallbackQuery(); await list(ctx, Number(ctx.match[1])); });
-  bot.callbackQuery(/^ord:m:([a-z]+):([a-z0-9]{1,4}):(0x[0-9a-f]{40})$/, async (ctx) => {
+  bot.callbackQuery(/^ord:m:([a-z]+):([a-z0-9]{1,4}):(0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/, async (ctx) => {
     clear(); await ctx.answerCallbackQuery(); await menu(ctx, ctx.match[1], ctx.match[2], ctx.match[3]);
   });
-  bot.callbackQuery(/^ord:k:(lb|ls|mb|ms|dca):([a-z]+):([a-z0-9]{1,4}):(0x[0-9a-f]{40})$/, async (ctx) => {
+  bot.callbackQuery(/^ord:k:(lb|ls|mb|ms|dca):([a-z]+):([a-z0-9]{1,4}):(0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/, async (ctx) => {
     clear(); await ctx.answerCallbackQuery();
     try { await prompt(ctx, SHORT[ctx.match[1] as Short], ctx.match[2], ctx.match[3], ctx.match[4] as Address); }
     catch (e) { await reply(ctx, `无法打开订单输入：${escapeHtml(errMsg(e))}`, backKb()); }

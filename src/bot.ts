@@ -20,7 +20,7 @@ import { registerExecutionPanel } from "./execution-panel.ts";
 import { registerTracked } from "./tracked-panel.ts";
 import { registerSolana } from "./sol-panel.ts";
 import type { SolanaServices } from "./sol-panel.ts";
-import { SOLANA } from "./sol-settings.ts";
+import { SOLANA, solSettings } from "./sol-settings.ts";
 import { OrderStore } from "./orders.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
@@ -118,8 +118,8 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   clearPositions = registerPositions(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps,
     slippage: (key) => settings(key).sellSlippageBps, refresh: refreshCard }, { readToken: services.readToken, getRoute: services.getRoute, sell: services.sell });
   clearFunds = registerFundsPanel(bot, { chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps, slippage: (key) => settings(key).buySlippageBps });
-  clearOrders = registerOrders(bot, { store: orders, state, chains: cfg.chains, logos, deps: getDeps,
-    slippage: (key, side) => (side === "buy" ? settings(key).buySlippageBps : settings(key).sellSlippageBps) });
+  clearOrders = registerOrders(bot, { sol: solana.market, store: orders, state, chains: cfg.chains, logos, deps: getDeps,
+    slippage: (key, side) => { const s = key === "sol" ? solSettings(state) : settings(key); return side === "buy" ? s.buySlippageBps : s.sellSlippageBps; } });
   clearTracked = registerTracked(bot, { state, logos, activeChain: activeKey, deps: getDeps });
   registerWalletPanel(bot, { state, chains: cfg.chains, logos, directory: wallets, list: walletList, activeWallet, activeChain: activeKey,
     deps: getDeps, readToken: services.readToken, onSwitch: () => { input = null; pendingBuys.clear(); } });

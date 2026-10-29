@@ -15,7 +15,7 @@ import { awaitLanding, SolPendingError, SolTradeError } from "./sol-trade.ts";
 
 export const JITO_URL = "https://mainnet.block-engine.jito.wtf/api/v1/transactions?bundleOnly=true";
 export type SolExecution = { mev?: boolean; jitoTipLamports?: string; maxTxFee?: string | null };
-export type SolTransactionContext = { journal: Journal; policy: () => SolExecution };
+export type SolTransactionContext = { journal: Journal; policy: () => SolExecution; orderId?: string; autoProgress?: { done: number; peak: string } };
 type WireInstruction = { programId: string; accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string };
 
 export function decodeSolInstruction(ix: WireInstruction, owner: string): Instruction {
@@ -85,7 +85,7 @@ export async function sendSolInstructions(rpc: SolRpc, signer: KeyPairSigner, in
   if (simulated.value.err) throw new SolTradeError("链上预演未通过，未发送交易");
   ensureCurrent();
   if (JSON.stringify(ctx.policy()) !== policyVersion) throw new Error("发送设置已改变，请重新确认");
-  const id = ctx.journal.start({ ...entry, chain: "sol", wallet: "main", owner: signer.address, signature: sig, lastValidBlockHeight: built.lastValidBlockHeight.toString(), tipLamports: built.tip.toString() });
+  const id = ctx.journal.start({ ...entry, chain: "sol", wallet: "main", owner: signer.address, signature: sig, lastValidBlockHeight: built.lastValidBlockHeight.toString(), tipLamports: built.tip.toString(), orderId: ctx.orderId, autoProgress: ctx.autoProgress });
   // 先保存签名再广播。网络断开也不能丢掉这笔交易的查账线索。
   ctx.journal.update(id, { status: "pending" });
   try {
