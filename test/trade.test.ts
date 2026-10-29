@@ -90,3 +90,12 @@ test("金额卖出使用确认的精确代币数，保留最低输出；余额�
   f.setOutput("80"); await assert.rejects(sell(f.d, TOKEN, 13.3, 1000, confirmation), /价格超出/);
   assert.equal(f.writes(), 1);
 });
+
+test("自动单在排队或准备交易后暂停，买卖发送前再次检查，均不广播", async (t) => {
+  const f = fixture(t); let checks = 0;
+  await assert.rejects(buy(f.d, TOKEN, 1000n, 1000, undefined, undefined, undefined, () => { if (++checks >= 2) throw new Error("订单已暂停"); }), /已暂停/);
+  assert.equal(f.writes(), 0);
+  checks = 0;
+  await assert.rejects(sell(f.d, TOKEN, 50, 1000, undefined, undefined, () => { if (++checks >= 2) throw new Error("订单已暂停"); }), /已暂停/);
+  assert.equal(f.writes(), 0);
+});

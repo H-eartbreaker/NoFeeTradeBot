@@ -113,10 +113,11 @@ export async function ensureAllowance(d: TradeDeps, token: Address, spender: Add
 }
 
 // gate: 发送交易前必须通过的检查（如貔貅检测），和报价、生成交易数据并行进行以省时间
-export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps: number, gate?: Promise<unknown> | (() => Promise<unknown>), confirmation?: BuyConfirmation, minimumOutput?: bigint): Promise<BuyResult> {
+export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps: number, gate?: Promise<unknown> | (() => Promise<unknown>), confirmation?: BuyConfirmation, minimumOutput?: bigint, executionCheck?: () => void): Promise<BuyResult> {
   return serial(async () => {
     if (amountWei <= 0n) throw new Error("买入金额必须大于 0");
     const validate = () => {
+      executionCheck?.();
       if (confirmation?.expiresAt !== undefined && Date.now() >= confirmation.expiresAt) throw new Error("买入确认已过期，请重新确认");
     };
     validate();
@@ -163,11 +164,12 @@ export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps
   }, queueKey(d));
 }
 
-export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: number, confirmation?: SellConfirmation, minimumOutput?: bigint): Promise<SellResult> {
+export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: number, confirmation?: SellConfirmation, minimumOutput?: bigint, executionCheck?: () => void): Promise<SellResult> {
   return serial(async () => {
     if (!Number.isFinite(pct) || (!confirmation && pct < 0.01) || pct < 0 || pct > 100) throw new Error("卖出比例必须在 0.01～100% 之间");
     let remainingFee = confirmation?.maxGasCost ?? 0n;
     const validate = (request?: PreparedGas) => {
+      executionCheck?.();
       if (confirmation?.expiresAt !== undefined && Date.now() >= confirmation.expiresAt) throw new Error("卖出确认已过期，请重新确认");
       if (confirmation && request) {
         const fee = executionFee(request);
@@ -195,7 +197,7 @@ export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: num
       if (minimumOutput !== undefined && BigInt(route.routeSummary.amountOut) < minimumOutput) throw new LimitNotMetError();
     };
     checkRoute();
-    const approveHash = await ensureAllowance(d, token, route.routerAddress, amount, confirmation ? { validate } : undefined);
+    const approveHash = await ensureAllowance(d, token, route.routerAddress, amount, confirmation || executionCheck ? { validate } : undefined);
     if (approveHash) route = await getRoute(slug(d.chain), token, NATIVE, amount);
     checkRoute();
     if (confirmation && await balanceOf(d, token) !== balance) throw new Error("持仓余额已变化，请重新确认卖出");
@@ -213,7 +215,7 @@ export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: num
       to: swap.routerAddress,
       data: swap.data,
       value: swap.transactionValue,
-    }, confirmation ? validate : undefined, { kind: "sell", token, amountIn: amount.toString(), sellPct: pct, balanceBefore: balance.toString() });
+    }, confirmation || executionCheck ? validate : undefined, { kind: "sell", token, amountIn: amount.toString(), sellPct: pct, balanceBefore: balance.toString() });
     let nativeAfter: bigint;
     try { nativeAfter = await publicClient.getBalance({ address: account.address, blockNumber: receipt.blockNumber }); }
     catch { throw new ConfirmedTransactionError(hash); }

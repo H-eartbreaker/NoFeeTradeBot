@@ -14,6 +14,7 @@ import { errMsg, escapeHtml, fmtUnits } from "./util.ts";
 
 export const ORDER_INTERVAL_MS = 10_000;
 const MAX_FAILS = 3;
+class OrderStoppedError extends Error {}
 
 export type OrderOps = {
   balanceOf: typeof balanceOf;
@@ -47,6 +48,16 @@ export function startOrderRunner(o: OrderRunnerOpts): () => void {
 
   const say = (text: string) => o.notify(text).catch((e) => console.log("订单通知发送失败:", errMsg(e)));
   const tag = (order: Order) => `#${order.id.slice(0, 6)} ${escapeHtml(order.symbol.slice(0, 40))}`;
+  const ready = (order: Order) => {
+    const current = o.store.get(order.id);
+    return !o.state.autoPaused && current?.status === "active" && (current.expiresAt === null || Date.now() < current.expiresAt);
+  };
+  const executionCheck = (order: Order) => () => {
+    const current = o.store.get(order.id);
+    if (o.state.autoPaused || current?.status !== "executing" || (current.expiresAt !== null && Date.now() >= current.expiresAt)) {
+      throw new OrderStoppedError("订单已暂停、取消或过期，未提交交易");
+    }
+  };
 
   async function expire(order: Order) {
     o.store.update(order.id, { status: "cancelled", note: "已过期，未执行" });
@@ -80,8 +91,15 @@ export function startOrderRunner(o: OrderRunnerOpts): () => void {
   }
 
   async function failed(order: Order, error: unknown, pausedStatus: "failed" | "paused") {
+    if (error instanceof OrderStoppedError) {
+      const current = o.store.get(order.id);
+      if (current?.status === "executing") o.store.update(order.id, {
+        status: current.expiresAt !== null && Date.now() >= current.expiresAt ? "cancelled" : "active", note: error.message,
+      });
+      return;
+    }
     if (error instanceof PendingTransactionError || error instanceof ConfirmedTransactionError) {
-      o.store.update(order.id, { status: "needs-check", note: errMsg(error) });
+      o.store.update(order.id, { status: "needs-check", lastHash: error.hash ?? order.lastHash, note: errMsg(error) });
       await say(`⚠️ 订单 ${tag(order)} 交易结果待确认，已停止此订单，请核对链上记录：${escapeHtml(errMsg(error))}`);
       return;
     }
@@ -104,10 +122,12 @@ export function startOrderRunner(o: OrderRunnerOpts): () => void {
   }
 
   async function runBuy(order: Order, d: TradeDeps, amount: bigint, floor: bigint | undefined, pausedStatus: "failed" | "paused") {
+    if (!ready(order)) return;
     if (await buyGate(order, d, amount)) return;
+    if (!ready(order)) return;
     o.store.update(order.id, { status: "executing", note: "正在执行" });
     try {
-      const r = await ops.buy(d, order.token as Address, amount, o.slippageBps(order.chain, "buy"), undefined, undefined, floor);
+      const r = await ops.buy(d, order.token as Address, amount, o.slippageBps(order.chain, "buy"), undefined, undefined, floor, executionCheck(order));
       recordBuy(order, d, amount, r.hash);
       const spent = BigInt(order.spent) + amount;
       const runsLeft = order.runsLeft === null ? null : order.runsLeft - 1;
@@ -125,9 +145,10 @@ export function startOrderRunner(o: OrderRunnerOpts): () => void {
   }
 
   async function runSell(order: Order, d: TradeDeps, pct: number, floor: bigint) {
+    if (!ready(order)) return;
     o.store.update(order.id, { status: "executing", note: "正在执行" });
     try {
-      const r = await ops.sell(d, order.token as Address, pct, o.slippageBps(order.chain, "sell"), undefined, floor);
+      const r = await ops.sell(d, order.token as Address, pct, o.slippageBps(order.chain, "sell"), undefined, floor, executionCheck(order));
       try {
         o.state.recordSell(d.chain.key, order.token, pct, order.wallet, r.hash, r.balanceBefore ? { sold: r.soldAmount, balance: r.balanceBefore } : undefined);
       } catch { throw new ConfirmedTransactionError(r.hash); }
