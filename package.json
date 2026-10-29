@@ -1,0 +1,19 @@
+{
+  "name": "bsc-trade-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=.env src/index.ts",
+    "check": "tsc --noEmit",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "grammy": "^1.46.0",
+    "viem": "^2.57.13"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
