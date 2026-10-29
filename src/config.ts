@@ -55,7 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const defaultSlippageBps = pctToBps(Number(env.DEFAULT_SLIPPAGE_PCT?.trim() || "10"));
   if (defaultSlippageBps === null) throw new Error("DEFAULT_SLIPPAGE_PCT 必须在 0.01 到 99.99 之间");
 
-  const solanaRpcUrl = env.SOLANA_RPC_URL?.trim() || "https://solana-rpc.publicnode.com";
+  const solanaRpcUrl = env.SOLANA_RPC_URL?.trim() || "https://api.mainnet-beta.solana.com";
 
   return { botToken, allowedUserId, privateKey: privateKey as Hex, chains, defaultSlippageBps, solanaRpcUrl };
 }

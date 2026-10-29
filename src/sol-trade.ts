@@ -57,11 +57,18 @@ async function execute(rpc: SolRpc, signer: KeyPairSigner, swapQuote: Quote, ens
 }
 
 // 区块高度在读取签名状态之前读取：过期后仍查不到状态，才能确定交易不会再上链
-async function awaitLanding(rpc: SolRpc, signature: Signature, lastValidBlockHeight: bigint): Promise<void> {
+export async function awaitLanding(rpc: SolRpc, signature: Signature, lastValidBlockHeight: bigint): Promise<void> {
   const deadline = Date.now() + CONFIRM_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const height = await rpc.getBlockHeight().send();
-    const { value } = await rpc.getSignatureStatuses([signature]).send();
+    let height: bigint;
+    let value;
+    try {
+      height = await rpc.getBlockHeight().send();
+      ({ value } = await rpc.getSignatureStatuses([signature]).send());
+    } catch {
+      // 已广播后的查询失败不等于交易失败，必须保留签名，禁止引导重复发送。
+      throw new SolPendingError(signature);
+    }
     const status = value[0];
     if (status) {
       if (status.err) throw new SolTradeError("链上交易执行失败，资金基本未变化（可能扣了手续费）");
