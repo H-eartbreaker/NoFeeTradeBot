@@ -21,10 +21,7 @@ A Telegram trading bot that runs on your own computer. Send a token contract add
 
 ## About
 
-The name **NoFee** means the bot itself adds no platform fee and has no subscription. It does not mean trading is free. Every trade still pays the real on-chain costs: gas, DEX or router fees, cross-chain service fees, and a Jito tip if you enable Jito.
-
-- **No platform fee**: The project takes no cut, has no subscription, and deducts nothing extra from your trades.
-- **Not custodial**: The bot runs on your own computer with your own Telegram account and wallet. Your private key stays in the local `.env` file, and funds stay in your wallet.
+The bot runs on your own computer, with your own Telegram account and wallet. Your private key stays in the local `.env` file, and funds stay in your wallet. The project does not custody funds.
 
 - **Single user**: Only the Telegram user ID set as `ALLOWED_USER_ID` in `.env` can operate it. Messages and button callbacks from anyone else are rejected.
 - **Keys stay local**: The private key is stored in the project's `.env` file (permissions 600). It is not sent to chats or logs.
@@ -170,6 +167,9 @@ A: If you enabled a risk check in the buy settings (such as tax or honeypot chec
 
 **Q: The bot doesn't reply in Telegram. What should I do?**
 A: Check the `npm start` output for connection errors. If your network needs a proxy, set `HTTPS_PROXY` in `.env` and restart the bot.
+
+**Q: Why is it called NoFee?**
+A: It means the bot itself adds no platform fee and has no subscription. It does not mean trading is free: on-chain gas, DEX or router fees, cross-chain service fees, and an optional Jito tip still apply.
 
 **Q: What fees do trades involve?**
 A: On-chain gas, DEX or router trading fees, cross-chain service fees, and a Jito tip you set yourself if you enable Jito. Actual fees are shown on the confirmation page and in on-chain records.
