@@ -1,4 +1,4 @@
-import { erc20Abi } from "viem";
+import { erc20Abi, parseAbi } from "viem";
 import type { Address } from "viem";
 import type { Clients } from "./wallet.ts";
 
@@ -27,4 +27,14 @@ export async function readToken(c: Clients, token: Address, blockNumber?: bigint
     decimals: decimals.result,
     balance: balance.result,
   };
+}
+
+const ownerAbi = parseAbi(["function owner() view returns (address)"]);
+// 没有 owner() 或读取失败时返回 null；权限已放弃时返回零地址
+export async function readOwner(c: Clients, token: Address, blockNumber?: bigint): Promise<string | null> {
+  try {
+    return await c.publicClient.readContract({ address: token, abi: ownerAbi, functionName: "owner", blockNumber });
+  } catch {
+    return null;
+  }
 }

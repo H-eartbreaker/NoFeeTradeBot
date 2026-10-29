@@ -1,11 +1,13 @@
 import type { Address } from "viem";
 import { checkToken } from "./honeypot.ts";
 import type { RiskReport } from "./honeypot.ts";
-import { getRoute } from "./kyber.ts";
+import { NATIVE, getRoute } from "./kyber.ts";
+import { NO_FILTER, blacklistReasons, filterBlocks } from "./risk-policy.ts";
 import { priceOf, supplyOf } from "./order-market.ts";
 import { isBuyKind, isMcapKind, metricValue, minimumNativeOut, minimumTokensOut, targetPrice, triggered } from "./orders.ts";
 import type { Order, OrderStore } from "./orders.ts";
 import type { State } from "./state.ts";
+import { readOwner } from "./token.ts";
 import { balanceOf, buy, sell, ConfirmedTransactionError, LimitNotMetError, PendingTransactionError } from "./trade.ts";
 import type { TradeDeps } from "./trade.ts";
 import { errMsg, escapeHtml, fmtUnits } from "./util.ts";
@@ -20,6 +22,7 @@ export type OrderOps = {
   sell: typeof sell;
   checkToken: typeof checkToken;
   supply: typeof supplyOf;
+  readOwner: typeof readOwner;
 };
 export type OrderRunnerOpts = {
   store: OrderStore;
@@ -32,7 +35,7 @@ export type OrderRunnerOpts = {
 
 // 执行前检查：过期、持仓、貔貅盘、限价、余额和滑点（余额与 Gas 由交易函数再次检查）
 export function startOrderRunner(o: OrderRunnerOpts): () => void {
-  const ops: OrderOps = { balanceOf, getRoute, buy, sell, checkToken, supply: supplyOf, ...o.ops };
+  const ops: OrderOps = { balanceOf, getRoute, buy, sell, checkToken, supply: supplyOf, readOwner, ...o.ops };
   let running = false;
 
   // 上次进程在交易途中退出时，结果未知，不能自动重发
@@ -50,12 +53,30 @@ export function startOrderRunner(o: OrderRunnerOpts): () => void {
     await say(`⌛ 订单 ${tag(order)} 已过期，未执行。`);
   }
 
-  async function honeypot(order: Order, d: TradeDeps): Promise<boolean> {
+  // 只用于买入。貔貅和黑名单取消订单；过滤不通过则保留订单，等下一轮再检查
+  async function buyGate(order: Order, d: TradeDeps, amount: bigint): Promise<boolean> {
     const report: RiskReport | null = d.chain.honeypotChainId ? await ops.checkToken(d.chain.honeypotChainId, order.token as Address) : null;
-    if (!report?.isHoneypot) return false;
-    o.store.update(order.id, { status: "failed", note: "检测到貔貅盘，已取消，未买入" });
-    await say(`🚨 订单 ${tag(order)} 检测到貔貅盘，已取消。`);
-    return true;
+    if (report?.isHoneypot) {
+      o.store.update(order.id, { status: "failed", note: "检测到貔貅盘，已取消，未买入" });
+      await say(`🚨 订单 ${tag(order)} 检测到貔貅盘，已取消。`);
+      return true;
+    }
+    const owner = await ops.readOwner(d.clients, order.token as Address);
+    const blocked = blacklistReasons(o.state, { chain: d.chain.key, token: order.token, owner });
+    if (blocked.length) {
+      o.store.update(order.id, { status: "cancelled", note: `已取消，未买入：${blocked.join("；")}` });
+      await say(`🚫 订单 ${tag(order)} 已取消：${escapeHtml(blocked.join("；"))}。`);
+      return true;
+    }
+    const filter = o.state.chainSettings(d.chain.key).risk ?? NO_FILTER;
+    const route = filter.maxImpactPct !== null && d.chain.kyberSlug ? await ops.getRoute(d.chain.kyberSlug, NATIVE, order.token as Address, amount).catch(() => null) : null;
+    const waiting = filterBlocks(filter, report, route);
+    if (waiting.length) {
+      const note = `风控过滤暂不买入，将继续检查：${waiting.join("；")}`;
+      if (order.note !== note) o.store.update(order.id, { note });
+      return true;
+    }
+    return false;
   }
 
   async function failed(order: Order, error: unknown, pausedStatus: "failed" | "paused") {
@@ -83,7 +104,7 @@ export function startOrderRunner(o: OrderRunnerOpts): () => void {
   }
 
   async function runBuy(order: Order, d: TradeDeps, amount: bigint, floor: bigint | undefined, pausedStatus: "failed" | "paused") {
-    if (await honeypot(order, d)) return;
+    if (await buyGate(order, d, amount)) return;
     o.store.update(order.id, { status: "executing", note: "正在执行" });
     try {
       const r = await ops.buy(d, order.token as Address, amount, o.slippageBps(order.chain, "buy"), undefined, undefined, floor);
@@ -104,7 +125,6 @@ export function startOrderRunner(o: OrderRunnerOpts): () => void {
   }
 
   async function runSell(order: Order, d: TradeDeps, pct: number, floor: bigint) {
-    if (await honeypot(order, d)) return;
     o.store.update(order.id, { status: "executing", note: "正在执行" });
     try {
       const r = await ops.sell(d, order.token as Address, pct, o.slippageBps(order.chain, "sell"), undefined, floor);

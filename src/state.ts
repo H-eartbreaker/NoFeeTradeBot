@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { RuleKind, Tier } from "./auto-rules.ts";
+import type { RiskFilter } from "./risk-policy.ts";
 
 // cost 是买入花费的原生币（wei，字符串存储）；tp/sl/trail 是百分比，null 表示不启用
 // tiers 是分档止盈（at 为涨幅%，pct 为卖出当前余额的%）；done 为已执行档数；peak 为观察到的最高价值（wei）
@@ -15,7 +16,9 @@ export type ChainSettings = {
   sellPercentages?: number[];
   buyConfirmation?: boolean;
   quickBuy?: boolean;
+  risk?: RiskFilter;
 };
+export type Blacklist = { tokens: string[]; developers: string[] };
 export type DisplaySettings = { showChart: boolean; showExplorer: boolean; timeZone: string; hour12: boolean };
 export type ChainLogo = { chain?: string; native?: string };
 const defaultDisplay = (): DisplaySettings => ({ showChart: true, showExplorer: true, timeZone: "Asia/Shanghai", hour12: false });
@@ -32,6 +35,7 @@ type StateData = {
   appliedTransactions: string[];
   logos?: { enabled: boolean; chains: Record<string, ChainLogo> };
   autoPaused?: boolean;
+  blacklist: Blacklist;
 };
 
 const legacyTiers = (tp: number | null): Tier[] => (tp === null ? [] : [{ at: tp, pct: 100 }]);
@@ -48,7 +52,7 @@ export class State {
 
   constructor(file: string) {
     this.file = file;
-    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {}, chainSettings: {}, display: defaultDisplay(), activeWallet: "main", walletTokens: {}, appliedTransactions: [] };
+    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {}, chainSettings: {}, display: defaultDisplay(), activeWallet: "main", walletTokens: {}, appliedTransactions: [], autoPaused: false, blacklist: { tokens: [], developers: [] } };
     try {
       const p = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
       // 旧版本的 tokens 是数组（只有 BSC）
@@ -65,6 +69,8 @@ export class State {
         walletTokens: (p.walletTokens as StateData["walletTokens"] | undefined) ?? {},
         appliedTransactions: (p.appliedTransactions as string[] | undefined) ?? [],
         logos: p.logos as StateData["logos"],
+        autoPaused: p.autoPaused === true,
+        blacklist: { tokens: [], developers: [], ...(p.blacklist as Partial<Blacklist> | undefined) },
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("本地状态文件无法读取或已损坏，请保留原文件并检查，未自动改写");
@@ -90,8 +96,25 @@ export class State {
     this.save();
   }
 
+  // 风控过滤属于安全设置，不随“恢复本链默认”一起清除
   resetChainSettings(chain: string): void {
+    const risk = this.data.chainSettings[chain]?.risk;
     delete this.data.chainSettings[chain];
+    if (risk) this.data.chainSettings[chain] = { risk };
+    this.save();
+  }
+
+  isBlacklisted(kind: "token" | "developer", chain: string, address: string): boolean {
+    const list = kind === "token" ? this.data.blacklist.tokens : this.data.blacklist.developers;
+    return list.includes(`${chain}:${address.toLowerCase()}`);
+  }
+
+  setBlacklisted(kind: "token" | "developer", chain: string, address: string, on: boolean): void {
+    const list = kind === "token" ? this.data.blacklist.tokens : this.data.blacklist.developers;
+    const key = `${chain}:${address.toLowerCase()}`;
+    const next = list.filter((x) => x !== key);
+    if (on) next.push(key);
+    if (kind === "token") this.data.blacklist.tokens = next; else this.data.blacklist.developers = next;
     this.save();
   }
 

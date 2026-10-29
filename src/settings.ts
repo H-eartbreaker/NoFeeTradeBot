@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { formatEther, maxUint256, parseEther } from "viem";
 import type { ChainConfig } from "./chains.ts";
 import type { State } from "./state.ts";
+import { NO_FILTER } from "./risk-policy.ts";
 
 export function tradingSettings(state: State, chain: ChainConfig, defaultSlippageBps: number) {
   const s = state.chainSettings(chain.key);
@@ -13,6 +14,7 @@ export function tradingSettings(state: State, chain: ChainConfig, defaultSlippag
     sellPercentages: s.sellPercentages ?? [25, 50, 100],
     buyConfirmation: s.buyConfirmation ?? true,
     quickBuy: s.quickBuy ?? false,
+    risk: s.risk ?? NO_FILTER,
   };
 }
 

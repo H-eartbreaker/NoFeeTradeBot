@@ -40,6 +40,9 @@ export function buttonIcon(text: string, data?: string): string | null {
   if (/^ord:(no:|cancel$|x:)/.test(data)) return "✖️";
   if (/^ord:t:/.test(data)) return "⏯️";
   if (/^t:/.test(data)) return "🎯";
+  if (/^rule:/.test(data)) return "🎯";
+  if (/^bl:/.test(data)) return "🚫";
+  if (/^risk:/.test(data)) return "⚠️";
   if (/^r:/.test(data)) return "🔄";
   if (/^pools:/.test(data)) return "💧";
   if (/^set:[a-z]+:(buy-slip|sell-slip)/.test(data)) return "📐";
