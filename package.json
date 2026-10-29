@@ -6,7 +6,8 @@
   "scripts": {
     "start": "NODE_USE_ENV_PROXY=1 node --env-file=.env src/index.ts",
     "check": "tsc --noEmit",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "wallet:import": "node --env-file=.env scripts/import-wallet.ts"
   },
   "dependencies": {
     "grammy": "^1.46.0",

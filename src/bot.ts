@@ -5,6 +5,7 @@ import { formatEther, formatUnits } from "viem";
 import type { Address } from "viem";
 import type { Wallets } from "./wallets.ts";
 import { registerLogos } from "./logos.ts";
+import { registerWalletPanel } from "./wallet-panel.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
 import type { RiskReport } from "./honeypot.ts";
@@ -74,7 +75,10 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     await next();
   });
   const logos = registerLogos(bot, state, cfg.chains);
+  registerWalletPanel(bot, { state, chains: cfg.chains, logos, directory: wallets, list: walletList, activeWallet, activeChain: activeKey,
+    deps: getDeps, readToken: services.readToken, onSwitch: () => { input = null; pendingBuys.clear(); } });
   const mainKeyboard = () => new InlineKeyboard().text("买入 / 查看代币", "nav:buy").text("持仓与余额", "nav:balance").row()
+    .text("钱包管理", "wallet:page:0").text("交易记录", `history:${activeWallet()}:${activeKey()}:0`).row()
     .text("切换交易链", "nav:chain").text("设置", "nav:settings").row().text("止盈止损", "nav:tpsl").text("使用说明", "nav:help");
   const backKeyboard = () => new InlineKeyboard().text("返回首页", "nav:start");
   function invalidate(chain: string) {
@@ -104,7 +108,8 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   async function home(ctx: Context) {
     const d = getDeps(activeKey())!;
     const s = settings(d.chain.key);
-    await panel(ctx, ["<b>demo bot</b>", `当前链：${logos.chain(d.chain)}`, `钱包：<code>${d.clients.account.address}</code>`,
+    const wallet = walletList().find((w) => w.id === activeWallet())!;
+    await panel(ctx, ["<b>demo bot</b>", `当前链：${logos.chain(d.chain)}`, `当前钱包：${escapeHtml(wallet.label)}`, `钱包：<code>${d.clients.account.address}</code>`,
       `买入滑点 ${s.buySlippageBps / 100}% · 卖出滑点 ${s.sellSlippageBps / 100}%`, `买前确认：${s.buyConfirmation ? "开启" : "关闭"}`,
       "", "选择下面的功能，或直接发送代币合约地址。"].join("\n"), mainKeyboard());
   }
