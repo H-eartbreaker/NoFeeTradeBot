@@ -156,12 +156,13 @@ export class State {
   }
 
   // 卖出后调用：按比例扣减成本，卖光则删除仓位
-  recordSell(chain: string, token: string, pct: number, wallet = "main", hash?: string): void {
+  recordSell(chain: string, token: string, pct: number, wallet = "main", hash?: string, fraction?: { sold: bigint; balance: bigint }): void {
     if (this.applied(chain, wallet, hash)) return;
+    if (fraction && (fraction.balance <= 0n || fraction.sold <= 0n || fraction.sold > fraction.balance)) throw new Error("卖出数量与余额不符");
     const key = posKey(chain, token, wallet);
     const old = this.data.positions[key];
-    if (pct >= 100) delete this.data.positions[key];
-    else if (old) old.cost = ((BigInt(old.cost) * BigInt(10_000 - Math.round(pct * 100))) / 10_000n).toString();
+    if (fraction ? fraction.sold === fraction.balance : pct >= 100) delete this.data.positions[key];
+    else if (old) old.cost = (fraction ? BigInt(old.cost) * (fraction.balance - fraction.sold) / fraction.balance : (BigInt(old.cost) * BigInt(10_000 - Math.round(pct * 100))) / 10_000n).toString();
     this.markApplied(chain, wallet, hash); this.save();
   }
 

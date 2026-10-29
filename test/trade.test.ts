@@ -35,7 +35,7 @@ function fixture(t: TestContext) {
       readContract: async (args: { functionName: string; blockNumber?: bigint }) => args.functionName === "allowance" ? maxUint256 : args.blockNumber ? 1100n : 1000n,
       waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 7n, gasUsed: 100n, effectiveGasPrice: 1n }),
     },
-    walletClient: { chain: CHAINS.bsc.viemChain, prepareTransactionRequest: async (args: object) => ({ ...args, gas: 100n }), sendTransaction: async () => { writes++; return `0x${"1".repeat(64)}`; } },
+    walletClient: { chain: CHAINS.bsc.viemChain, prepareTransactionRequest: async (args: object) => ({ ...args, gas: 100n, gasPrice: 1n }), sendTransaction: async () => { writes++; return `0x${"1".repeat(64)}`; } },
   } } as unknown as TradeDeps;
   return { d, writes: () => writes, quotedAmount: () => quotedAmount, buildSlippage: () => buildSlippage, setOutput: (amountOut: string) => { currentRoute = { ...ROUTE, routeSummary: { ...ROUTE.routeSummary, amountOut } }; }, changePool: () => { currentRoute = { ...ROUTE, routeSummary: { ...ROUTE.routeSummary, route: [[{ pool: "pool-b", exchange: "dex" }]] } }; } };
 }
@@ -80,4 +80,13 @@ test("排队期间过期的确认在交易层被拒绝，风控在出队后执�
   release(); await blocking;
   await assert.rejects(pending, /确认已过期/);
   assert.equal(checks, 0); assert.equal(f.writes(), 0);
+});
+test("金额卖出使用确认的精确代币数，保留最低输出；余额变化或价格变化拒发", async (t) => {
+  const f = fixture(t);
+  const confirmation = { amount: 133n, balance: 1000n, route: routeIdentity(ROUTE), minimumOutput: 90n, maxGasCost: 1000n, expiresAt: Date.now() + 60000 };
+  const result = await sell(f.d, TOKEN, 13.3, 1000, confirmation);
+  assert.equal(result.soldAmount, 133n); assert.equal(result.balanceBefore, 1000n); assert.equal(f.quotedAmount(), "133");
+  await assert.rejects(sell(f.d, TOKEN, 13.3, 1000, { ...confirmation, balance: 999n }), /余额已变化/);
+  f.setOutput("80"); await assert.rejects(sell(f.d, TOKEN, 13.3, 1000, confirmation), /价格超出/);
+  assert.equal(f.writes(), 1);
 });

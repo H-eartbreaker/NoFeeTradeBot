@@ -6,7 +6,8 @@ import type { TradeDeps } from "./trade.ts";
 export function applyJournalEntry(state: State, e: JournalEntry): void {
   if (e.status !== "confirmed" || !e.token || !e.hash) return;
   if (e.kind === "buy" && e.amountIn) state.recordBuy(e.chain, e.token, BigInt(e.amountIn), e.wallet, e.hash);
-  if (e.kind === "sell" && e.sellPct !== undefined) state.recordSell(e.chain, e.token, e.sellPct, e.wallet, e.hash);
+  if (e.kind === "sell" && e.sellPct !== undefined) state.recordSell(e.chain, e.token, e.sellPct, e.wallet, e.hash,
+    e.balanceBefore && e.amountIn ? { sold: BigInt(e.amountIn), balance: BigInt(e.balanceBefore) } : undefined);
 }
 
 // 只读查询已广播交易；不重新签名或广播。hash 去重让 UI 与恢复流程可以安全地同时记账。

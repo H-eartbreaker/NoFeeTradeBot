@@ -101,3 +101,11 @@ test("同钱包同链串行，其他钱包的交易不被挡住", async () => {
   await serial(async () => { assert.equal(secondRan, false); }, "another-wallet");
   release(); await first; await same; assert.equal(secondRan, true);
 });
+test("精确数量卖出按实际分数扣成本，账本恢复不因百分比取整而多扣", async (t) => {
+  const dir = directory(t); const s = new State(join(dir, "state.json")); const j = new Journal(join(dir, "journal.jsonl"));
+  s.recordBuy("bsc", TOKEN, 1000000n);
+  const id = j.start({ wallet: "main", chain: "bsc", token: TOKEN, kind: "sell", hash: HASH, amountIn: "1", balanceBefore: "3", sellPct: 33.33 });
+  j.update(id, { status: "confirmed" });
+  await reconcile(j, s, () => undefined); await reconcile(j, s, () => undefined);
+  assert.equal(s.position("bsc", TOKEN)!.cost, 666666n);
+});

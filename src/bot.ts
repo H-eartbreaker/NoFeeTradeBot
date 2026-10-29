@@ -300,7 +300,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       if (e instanceof ConfirmedTransactionError) state.recordSell(d.chain.key, token, pct, walletId(d), e.hash);
       await progress(ctx, pending, `${e instanceof ConfirmedTransactionError || e instanceof PendingTransactionError ? "⚠️" : "❌ 卖出未完成："}${errMsg(e)}`); return;
     }
-    try { state.recordSell(d.chain.key, token, pct, walletId(d), result.hash); } catch { await progress(ctx, pending, `卖出已成交，但本地记录失败。交易：${result.hash}`); return; }
+    try { state.recordSell(d.chain.key, token, pct, walletId(d), result.hash, result.balanceBefore ? { sold: result.soldAmount, balance: result.balanceBefore } : undefined); } catch { await progress(ctx, pending, `卖出已成交，但本地记录失败。交易：${result.hash}`); return; }
     await progress(ctx, pending, `✅ 卖出成功 ${fmtUnits(result.soldAmount, info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))} → 约 ${fmtUnits(result.receivedNative, 18, 6)} ${d.chain.nativeSymbol}${result.approveHash ? "（含一次授权）" : ""}\n<a href="${d.chain.explorerTx(result.hash)}">查看交易</a>`, true);
     await refreshCard(ctx, d, token, result.blockNumber, sourceMessageId);
   }

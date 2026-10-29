@@ -7,8 +7,9 @@ import type { Journal, JournalEntry } from "./journal.ts";
 
 export type TradeDeps = { clients: Clients; chain: ChainConfig; walletId?: string; journal?: Journal };
 export type BuyResult = { hash: Hex; received: bigint; blockNumber: bigint };
-export type SellResult = { hash: Hex; soldAmount: bigint; receivedNative: bigint; approveHash: Hex | null; blockNumber: bigint };
+export type SellResult = { hash: Hex; soldAmount: bigint; receivedNative: bigint; approveHash: Hex | null; blockNumber: bigint; balanceBefore?: bigint };
 export type BuyConfirmation = { route: string; minimumOutput: bigint; expiresAt?: number };
+export type SellConfirmation = BuyConfirmation & { amount: bigint; balance: bigint; maxGasCost: bigint };
 
 const queues = new Map<string, Promise<unknown>>();
 // 同一钱包的交易必须串行，否则连点按钮会产生 nonce 冲突
@@ -142,7 +143,7 @@ export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps
     if (native < amountWei + d.chain.gasReserve) {
       throw new Error(`${d.chain.nativeSymbol} 余额不足（需要买入金额 + 少量 gas）`);
     }
-    const { hash, receipt, journalId } = await sendAndWait(d, { to: swap.routerAddress, data: swap.data, value: swap.transactionValue }, validate, { kind: "buy", token, amountIn: amountWei.toString() });
+    const { hash, receipt, journalId } = await sendAndWait(d, { to: swap.routerAddress, data: swap.data, value: swap.transactionValue }, validate, { kind: "buy", token, amountIn: amountWei.toString(), balanceBefore: before.toString() });
     let after: bigint;
     try {
       after = await balanceOf(d, token, receipt.blockNumber);
@@ -156,9 +157,19 @@ export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps
   }, queueKey(d));
 }
 
-export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: number): Promise<SellResult> {
+export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: number, confirmation?: SellConfirmation): Promise<SellResult> {
   return serial(async () => {
-    if (!Number.isFinite(pct) || pct < 0.01 || pct > 100) throw new Error("卖出比例必须在 0.01～100% 之间");
+    if (!Number.isFinite(pct) || (!confirmation && pct < 0.01) || pct < 0 || pct > 100) throw new Error("卖出比例必须在 0.01～100% 之间");
+    let remainingFee = confirmation?.maxGasCost ?? 0n;
+    const validate = (request?: PreparedGas) => {
+      if (confirmation?.expiresAt !== undefined && Date.now() >= confirmation.expiresAt) throw new Error("卖出确认已过期，请重新确认");
+      if (confirmation && request) {
+        const fee = executionFee(request);
+        if (fee > remainingFee) throw new Error("卖出 Gas 超过确认预算，请重新确认");
+        remainingFee -= fee;
+      }
+    };
+    validate();
     const { account, publicClient } = d.clients;
     // 免费节点可能落后一个区块，刚买完查到 0 时稍等重试几次
     let balance = await balanceOf(d, token);
@@ -166,28 +177,41 @@ export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: num
       await new Promise((r) => setTimeout(r, 500));
       balance = await balanceOf(d, token);
     }
-    const amount = (balance * BigInt(Math.round(pct * 100))) / 10_000n;
+    if (confirmation && balance !== confirmation.balance) throw new Error("持仓余额已变化，请重新确认卖出");
+    const amount = confirmation?.amount ?? (balance * BigInt(Math.round(pct * 100))) / 10_000n;
+    if (amount > balance) throw new Error("卖出数量超过余额");
     if (amount <= 0n) throw new Error("没有可卖出的持仓");
 
     let route = await getRoute(slug(d.chain), token, NATIVE, amount);
-    const approveHash = await ensureAllowance(d, token, route.routerAddress, amount);
+    const checkRoute = () => {
+      if (BigInt(route.routeSummary.amountIn) !== amount || BigInt(route.routeSummary.amountOut) <= 0n) throw new Error("卖出报价金额不正确");
+      if (confirmation && (routeIdentity(route) !== confirmation.route || BigInt(route.routeSummary.amountOut) < confirmation.minimumOutput)) throw new Error("交易池或价格超出确认范围，请重新确认卖出");
+    };
+    checkRoute();
+    const approveHash = await ensureAllowance(d, token, route.routerAddress, amount, confirmation ? { validate } : undefined);
     if (approveHash) route = await getRoute(slug(d.chain), token, NATIVE, amount);
+    checkRoute();
+    if (confirmation && await balanceOf(d, token) !== balance) throw new Error("持仓余额已变化，请重新确认卖出");
+    const output = BigInt(route.routeSummary.amountOut);
+    const effectiveSlippage = confirmation ? Math.min(slippageBps, Number((output - confirmation.minimumOutput) * 10_000n / output)) : slippageBps;
 
     const [swap, nativeBefore] = await Promise.all([
-      buildSwap(slug(d.chain), route, account.address, slippageBps),
+      buildSwap(slug(d.chain), route, account.address, effectiveSlippage),
       publicClient.getBalance({ address: account.address }),
     ]);
     if (swap.transactionValue !== 0n || swap.routerAddress.toLowerCase() !== route.routerAddress.toLowerCase()) throw new Error("卖出交易金额或路由不一致，已拒绝发送");
+    if (confirmation && (swap.amountOut < confirmation.minimumOutput || nativeBefore < confirmation.maxGasCost)) throw new Error("卖出输出低于确认下限或 Gas 余额不足");
     const { hash, receipt, journalId } = await sendAndWait(d, {
       to: swap.routerAddress,
       data: swap.data,
       value: swap.transactionValue,
-    }, undefined, { kind: "sell", token, amountIn: amount.toString(), sellPct: pct });
+    }, confirmation ? validate : undefined, { kind: "sell", token, amountIn: amount.toString(), sellPct: pct, balanceBefore: balance.toString() });
     let nativeAfter: bigint;
     try { nativeAfter = await publicClient.getBalance({ address: account.address, blockNumber: receipt.blockNumber }); }
     catch { throw new ConfirmedTransactionError(hash); }
     const gasCost = receiptFee(receipt).gasCost;
-    if (journalId) d.journal!.update(journalId, { amountOut: (nativeAfter - nativeBefore + gasCost).toString() });
-    return { hash, soldAmount: amount, receivedNative: nativeAfter - nativeBefore + gasCost, approveHash, blockNumber: receipt.blockNumber };
+    try { if (journalId) d.journal!.update(journalId, { amountOut: (nativeAfter - nativeBefore + gasCost).toString(), amountOutEstimated: true }); }
+    catch { throw new ConfirmedTransactionError(hash); }
+    return { hash, soldAmount: amount, receivedNative: nativeAfter - nativeBefore + gasCost, approveHash, blockNumber: receipt.blockNumber, balanceBefore: balance };
   }, queueKey(d));
 }
