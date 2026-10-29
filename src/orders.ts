@@ -54,7 +54,8 @@ export function metricValue(kind: OrderKind, price: bigint, supply: bigint, deci
 export function targetPrice(kind: OrderKind, target: bigint, supply: bigint, decimals: number): bigint {
   if (!isMcapKind(kind)) return target;
   if (supply <= 0n) throw new Error("无法读取代币总量，不能按市值下单");
-  return (target * scale(decimals)) / supply;
+  const numerator = target * scale(decimals);
+  return isBuyKind(kind) ? numerator / supply : (numerator + supply - 1n) / supply;
 }
 
 export function triggered(kind: OrderKind, current: bigint, target: bigint): boolean {
@@ -62,11 +63,12 @@ export function triggered(kind: OrderKind, current: bigint, target: bigint): boo
 }
 
 export function minimumTokensOut(amount: bigint, price: bigint, decimals: number): bigint {
-  return price > 0n ? (amount * scale(decimals)) / price : 0n;
+  return price > 0n ? (amount * scale(decimals) + price - 1n) / price : 0n;
 }
 
 export function minimumNativeOut(sold: bigint, price: bigint, decimals: number): bigint {
-  return (sold * price) / scale(decimals);
+  const unit = scale(decimals);
+  return (sold * price + unit - 1n) / unit;
 }
 
 export function nextSlot(from: number, intervalMs: number, now: number): number {
@@ -106,6 +108,7 @@ export class OrderStore {
   }
 
   add(order: Order): void {
+    if (this.data.some((o) => o.id === order.id)) throw new Error("订单 ID 已存在，不能重复创建");
     if (this.openCount() >= MAX_OPEN_ORDERS) throw new Error(`进行中的订单已达 ${MAX_OPEN_ORDERS} 个上限，请先取消或完成部分订单`);
     this.data.push(structuredClone(order));
     this.save();
