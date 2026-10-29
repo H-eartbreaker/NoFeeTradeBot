@@ -5,8 +5,9 @@ import { configureCommandMenu } from "./menu.ts";
 import { startMonitor } from "./monitor.ts";
 import { State } from "./state.ts";
 import { tradingSettings } from "./settings.ts";
-import type { TradeDeps } from "./trade.ts";
-import { createClients } from "./wallet.ts";
+import { Wallets } from "./wallets.ts";
+import { Journal } from "./journal.ts";
+import { applyJournalEntry, reconcile } from "./reconcile.ts";
 
 const cfg = loadConfig();
 enableKeepAlive([
@@ -16,10 +17,11 @@ enableKeepAlive([
   ...cfg.chains.map((c) => c.rpcUrls[0]),
 ]);
 const state = new State("data/state.json");
-const deps = new Map<string, TradeDeps>(
-  cfg.chains.map((chain) => [chain.key, { chain, clients: createClients(cfg.privateKey, chain) }]),
-);
-const bot = createBot(cfg, deps, state);
+const journal = new Journal("data/trades.jsonl", (e) => applyJournalEntry(state, e));
+const wallets = new Wallets(cfg.privateKey, cfg.chains, ".env", journal);
+const deps = wallets.depsFor("main");
+await reconcile(journal, state, (wallet, chain) => wallets.get(wallet, chain));
+const bot = createBot(cfg, deps, state, {}, wallets);
 
 console.log(`链: ${cfg.chains.map((c) => c.label).join(", ")} | 钱包: ${deps.get(cfg.chains[0].key)!.clients.account.address}`);
 const timer = setTimeout(
@@ -36,6 +38,8 @@ await bot.start({
     startMonitor({
       state,
       deps,
+      getDeps: (wallet, chain) => wallets.get(wallet, chain),
+      onTick: () => reconcile(journal, state, (wallet, chain) => wallets.get(wallet, chain)),
       slippageBps: (chain) => tradingSettings(state, deps.get(chain)!.chain, cfg.defaultSlippageBps).sellSlippageBps,
       notify: (html) =>
         bot.api

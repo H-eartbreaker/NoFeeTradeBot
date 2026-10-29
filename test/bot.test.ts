@@ -82,7 +82,7 @@ function fixture(t: TestContext) {
     }
     throw new Error(`Missing button: ${prefix}`);
   }
-  const buyButton = (chain = "bsc") => `b:${chain}:${TOKEN}:0:${presetVersion(cfg.chains.find((c) => c.key === chain)!.buyAmounts)}`;
+  const buyButton = (chain = "bsc") => `b:${chain}:main:${TOKEN}:0:${presetVersion(cfg.chains.find((c) => c.key === chain)!.buyAmounts)}`;
   return { state, replies, messages, answers, send, callback, button, buyButton, buys, sells,
     setRisk: (value: RiskReport | null) => { report = value; }, setBalance: (value: bigint) => { balance = value; },
     failEdits: () => { failEdit = true; }, readCount: () => reads };
@@ -162,10 +162,10 @@ test("关闭确认只影响选中链，貔貅风控仍拦截，未知结果明�
 
 test("自定义买入保持原链与输入金额，自定义卖出支持小数比例", async (t) => {
   const f = fixture(t);
-  await f.callback(`custom:b:base:${TOKEN}`); await f.send("0.0025");
+  await f.callback(`custom:b:base:main:${TOKEN}`); await f.send("0.0025");
   assert.match(f.replies.at(-1)!, /买入：0.0025 ETH/); assert.equal(f.buys.length, 0);
   await f.callback(f.button("confirm:")); assert.equal(f.buys[0].chain, "base"); assert.equal(f.buys[0].amount, 2500000000000000n);
-  await f.callback(`custom:s:base:${TOKEN}`); await f.send("12.5%");
+  await f.callback(`custom:s:base:main:${TOKEN}`); await f.send("12.5%");
   assert.deepEqual(f.sells[0], { chain: "base", pct: 12.5, slip: 1000 });
 });
 

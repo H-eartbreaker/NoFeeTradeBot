@@ -3,6 +3,7 @@ import { Bot, InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import { formatEther, formatUnits } from "viem";
 import type { Address } from "viem";
+import type { Wallets } from "./wallets.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
 import type { RiskReport } from "./honeypot.ts";
@@ -14,17 +15,18 @@ import type { Rule } from "./state.ts";
 import { parseBuyPresets, parseNativeAmount, parseSellPercentage, parseSellPresets, presetVersion, tradingSettings } from "./settings.ts";
 import { readToken } from "./token.ts";
 import type { TokenInfo } from "./token.ts";
-import { buy, sell } from "./trade.ts";
+import { buy, sell, ConfirmedTransactionError, PendingTransactionError } from "./trade.ts";
 import type { TradeDeps } from "./trade.ts";
 import { errMsg, escapeHtml, extractAddress, fmtUnits, parseSlippageInput } from "./util.ts";
 
 const HTML = { parse_mode: "HTML", link_preview_options: { is_disabled: true } } as const;
 const ADDR = "(0x[0-9a-f]{40})";
 const KEY = "([a-z]+)";
+const WALLET = "([a-z0-9]{1,4})";
 const defaults = { readToken, checkToken, getRoute, buy, sell };
 type Services = typeof defaults;
-type Input = { chain: string; kind: "buy-slip" | "sell-slip" | "both-slip" | "buy-presets" | "sell-presets" | "zone" | "tpsl" | "buy" | "sell"; token?: Address; sourceMessageId?: number; expires: number };
-type PendingBuy = { chain: string; token: Address; amount: bigint; slippage: number; route: Route; report: RiskReport | null; info: TokenInfo; sourceMessageId?: number; expires: number };
+type Input = { wallet: string; chain: string; kind: "buy-slip" | "sell-slip" | "both-slip" | "buy-presets" | "sell-presets" | "zone" | "tpsl" | "buy" | "sell"; token?: Address; sourceMessageId?: number; expires: number };
+type PendingBuy = { wallet: string; chain: string; token: Address; amount: bigint; slippage: number; route: Route; report: RiskReport | null; info: TokenInfo; sourceMessageId?: number; expires: number };
 
 function usd(value: string | undefined): string {
   const n = Number(value);
@@ -52,10 +54,14 @@ function riskIdentity(report: RiskReport | null): string {
   return JSON.stringify(report ? [report.isHoneypot, report.buyTax, report.sellTax] : null);
 }
 
-export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: State, overrides: Partial<Services> = {}): Bot {
+export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: State, overrides: Partial<Services> = {}, wallets?: Wallets): Bot {
   const services = { ...defaults, ...overrides };
   const bot = new Bot(cfg.botToken, { client: { fetch: nativeFetch } });
   const activeKey = () => state.activeChain && deps.has(state.activeChain) ? state.activeChain : cfg.chains[0].key;
+  const walletList = () => wallets?.list() ?? [{ id: "main", label: "主钱包", address: deps.get(cfg.chains[0].key)!.clients.account.address }];
+  const activeWallet = () => walletList().some((p) => p.id === state.activeWallet) ? state.activeWallet : "main";
+  const getDeps = (chain: string, wallet = activeWallet()) => wallets?.get(wallet, chain) ?? (wallet === "main" ? deps.get(chain) : undefined);
+  const walletId = (d: TradeDeps) => d.walletId ?? "main";
   const settings = (key: string) => tradingSettings(state, deps.get(key)!.chain, cfg.defaultSlippageBps);
   let input: Input | null = null;
   const pendingBuys = new Map<string, PendingBuy>();
@@ -81,8 +87,8 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   async function quote(d: TradeDeps, tokenIn: Address, tokenOut: Address, amount: bigint): Promise<Route | null> {
     try { return await services.getRoute(d.chain.kyberSlug!, tokenIn, tokenOut, amount); } catch { return null; }
   }
-  function dep(ctx: Context, key: string | undefined): TradeDeps | null {
-    const d = key ? deps.get(key) : undefined;
+  function dep(ctx: Context, key: string | undefined, wallet = activeWallet()): TradeDeps | null {
+    const d = key ? getDeps(key, wallet) : undefined;
     if (!d && ctx.callbackQuery) void ctx.answerCallbackQuery("这条链未启用");
     return d ?? null;
   }
@@ -94,7 +100,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     } else await ctx.reply(text, { ...HTML, reply_markup: kb });
   }
   async function home(ctx: Context) {
-    const d = deps.get(activeKey())!;
+    const d = getDeps(activeKey())!;
     const s = settings(d.chain.key);
     await panel(ctx, ["<b>demo bot</b>", `当前链：${d.chain.label}`, `钱包：<code>${d.clients.account.address}</code>`,
       `买入滑点 ${s.buySlippageBps / 100}% · 卖出滑点 ${s.sellSlippageBps / 100}%`, `买前确认：${s.buyConfirmation ? "开启" : "关闭"}`,
@@ -112,23 +118,23 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   async function balance(ctx: Context) {
     const kb = new InlineKeyboard();
     const sections = await Promise.all(cfg.chains.map(async (c) => {
-      const d = deps.get(c.key)!;
+      const d = getDeps(c.key)!;
       try {
         const native = await d.clients.publicClient.getBalance({ address: d.clients.account.address });
         const lines = [`<b>${c.label}</b> · ${fmtUnits(native, 18, 6)} ${c.nativeSymbol}`];
-        const infos = await Promise.all(state.tokens(c.key).map((t) => services.readToken(d.clients, t as Address)));
+        const infos = await Promise.all(state.tokens(c.key, walletId(d)).map((t) => services.readToken(d.clients, t as Address)));
         for (const i of infos.filter((v): v is TokenInfo => !!v && v.balance > 0n)) {
           lines.push(`${escapeHtml(i.symbol.slice(0, 40))}：${fmtUnits(i.balance, i.decimals)}`);
-          kb.text(`${i.symbol.slice(0, 20)} · ${c.key}`, `r:${c.key}:${i.address}`).row();
+          kb.text(`${i.symbol.slice(0, 20)} · ${c.key}`, `r:${c.key}:${walletId(d)}:${i.address}`).row();
         }
         return lines.join("\n");
       } catch { return `<b>${c.label}</b> · 查询失败，请稍后重试`; }
     }));
     kb.text("返回首页", "nav:start");
-    await panel(ctx, `钱包：<code>${deps.get(activeKey())!.clients.account.address}</code>\n\n${sections.join("\n\n")}`, kb);
+    await panel(ctx, `钱包：<code>${getDeps(activeKey())!.clients.account.address}</code>\n\n${sections.join("\n\n")}`, kb);
   }
   async function showSettings(ctx: Context, key = activeKey(), edit = false) {
-    const d = deps.get(key)!;
+    const d = getDeps(key)!;
     const s = settings(key);
     const display = state.display;
     const kb = new InlineKeyboard();
@@ -145,8 +151,8 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       `卖出按钮：${s.sellPercentages.map((p) => `${p}%`).join(" / ")}`, `快速买入金额：第一档 ${formatEther(s.buyAmounts[0])} ${d.chain.nativeSymbol}`, "", "交易参数按链保存；显示和时间设置对所有链生效。", "修改参数不会重写已有仓位的止盈止损。"].join("\n"), kb, edit);
   }
   async function prompt(ctx: Context, kind: Input["kind"], chain = activeKey(), token?: Address, sourceMessageId?: number) {
-    const d = deps.get(chain)!;
-    input = { kind, chain, token, sourceMessageId, expires: Date.now() + 5 * 60_000 };
+    const d = getDeps(chain)!;
+    input = { wallet: activeWallet(), kind, chain, token, sourceMessageId, expires: Date.now() + 5 * 60_000 };
     const messages: Record<Input["kind"], string> = {
       "buy-slip": "直接发送买入滑点百分比，例如 30 或 30%。支持 0.01～99.99。",
       "sell-slip": "直接发送卖出滑点百分比，例如 15。支持 0.01～99.99。",
@@ -168,14 +174,14 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     if (!info) return null;
     const [report, buyQuote, sellQuote, native] = await Promise.all([risk(d, token), quote(d, NATIVE, token, s.buyAmounts[0]), info.balance > 0n ? quote(d, token, NATIVE, info.balance) : null,
       clients.publicClient.getBalance({ address: clients.account.address, blockNumber }).catch(() => null)]);
-    const lines = [`<b>${escapeHtml(info.symbol.slice(0, 40))}</b> · ${escapeHtml(info.name.slice(0, 100))}`, `链：${chain.label}`, `CA：<code>${token}</code>`, "", ...riskLines(report)];
+    const lines = [`<b>${escapeHtml(info.symbol.slice(0, 40))}</b> · ${escapeHtml(info.name.slice(0, 100))}`, `链：${chain.label}`, `钱包：<code>${clients.account.address}</code>`, `CA：<code>${token}</code>`, "", ...riskLines(report)];
     if (buyQuote) {
       lines.push(`参考报价：${formatEther(s.buyAmounts[0])} ${chain.nativeSymbol} ≈ ${fmtUnits(BigInt(buyQuote.routeSummary.amountOut), info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))}（${usd(buyQuote.routeSummary.amountOutUsd)}）`, ...poolLines(buyQuote));
       const quantity = Number(formatUnits(BigInt(buyQuote.routeSummary.amountOut), info.decimals));
       const price = Number(buyQuote.routeSummary.amountOutUsd) / quantity;
       if (quantity > 0 && Number.isFinite(price) && price > 0) lines.push(`参考单价：$${price.toPrecision(5)}`);
     } else lines.push("⚠️ 暂无报价，可能没有流动性或当前路由不支持该交易池。");
-    const pos = info.balance > 0n ? state.position(chain.key, token) : null;
+    const pos = info.balance > 0n ? state.position(chain.key, token, walletId(d)) : null;
     if (info.balance > 0n) {
       const value = sellQuote ? BigInt(sellQuote.routeSummary.amountOut) : null;
       lines.push(`持仓：${fmtUnits(info.balance, info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))}${value !== null ? ` ≈ ${fmtUnits(value, 18, 6)} ${chain.nativeSymbol}` : ""}`);
@@ -187,15 +193,15 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     const kb = new InlineKeyboard();
     if (buyQuote && !report?.isHoneypot) {
       const version = presetVersion(s.buyAmounts);
-      s.buyAmounts.forEach((a, i) => { kb.text(`买 ${formatEther(a)} ${chain.nativeSymbol}`, `b:${chain.key}:${token}:${i}:${version}`); if ((i + 1) % 3 === 0) kb.row(); });
-      kb.row().text("自定义买入", `custom:b:${chain.key}:${token}`).row();
+      s.buyAmounts.forEach((a, i) => { kb.text(`买 ${formatEther(a)} ${chain.nativeSymbol}`, `b:${chain.key}:${walletId(d)}:${token}:${i}:${version}`); if ((i + 1) % 3 === 0) kb.row(); });
+      kb.row().text("自定义买入", `custom:b:${chain.key}:${walletId(d)}:${token}`).row();
     }
     if (info.balance > 0n) {
-      s.sellPercentages.forEach((p, i) => { kb.text(`卖 ${p}%`, `s:${chain.key}:${token}:${p}`); if ((i + 1) % 3 === 0) kb.row(); });
-      kb.row().text("自定义卖出比例", `custom:s:${chain.key}:${token}`).row();
+      s.sellPercentages.forEach((p, i) => { kb.text(`卖 ${p}%`, `s:${chain.key}:${walletId(d)}:${token}:${p}`); if ((i + 1) % 3 === 0) kb.row(); });
+      kb.row().text("自定义卖出比例", `custom:s:${chain.key}:${walletId(d)}:${token}`).row();
     }
-    if (pos) kb.text(pos.tp !== null || pos.sl !== null ? "关闭止盈止损" : "开启止盈止损", `t:${chain.key}:${token}`).row();
-    kb.text("刷新", `r:${chain.key}:${token}`).text("交易设置", `settings:${chain.key}`).row();
+    if (pos) kb.text(pos.tp !== null || pos.sl !== null ? "关闭止盈止损" : "开启止盈止损", `t:${chain.key}:${walletId(d)}:${token}`).row();
+    kb.text("刷新", `r:${chain.key}:${walletId(d)}:${token}`).text("交易设置", `settings:${chain.key}`).row();
     if (state.display.showExplorer) kb.url("区块浏览器", chain.explorerTx(token).replace("/tx/", "/address/"));
     if (state.display.showChart) kb.url("搜索图表", `https://dexscreener.com/search?q=${token}`);
     kb.row().text("返回首页", "nav:start");
@@ -237,8 +243,11 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
         minimumOutput: BigInt(confirmation.route.routeSummary.amountOut) * BigInt(10_000 - slip) / 10_000n,
         expiresAt: confirmation.expires,
       } : undefined);
-    } catch (e) { await progress(ctx, pending, `❌ 买入未完成：${errMsg(e)}`); return; }
-    try { state.recordBuy(d.chain.key, token, amount); } catch { await progress(ctx, pending, `买入已成交，但本地记录失败，请勿重复买入。交易：${result.hash}`); return; }
+    } catch (e) {
+      if (e instanceof ConfirmedTransactionError) state.recordBuy(d.chain.key, token, amount, walletId(d), e.hash);
+      await progress(ctx, pending, `${e instanceof ConfirmedTransactionError || e instanceof PendingTransactionError ? "⚠️" : "❌ 买入未完成："}${errMsg(e)}`); return;
+    }
+    try { state.recordBuy(d.chain.key, token, amount, walletId(d), result.hash); } catch { await progress(ctx, pending, `买入已成交，但本地记录失败，请勿重复买入。交易：${result.hash}`); return; }
     await progress(ctx, pending, `✅ 买入成功 ${formatEther(amount)} ${d.chain.nativeSymbol} → ${fmtUnits(result.received, info!.decimals)} ${escapeHtml(info!.symbol.slice(0, 40))}\n<a href="${d.chain.explorerTx(result.hash)}">查看交易</a>`, true);
     await refreshCard(ctx, d, token, result.blockNumber, sourceMessageId);
   }
@@ -254,10 +263,10 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       for (const [id, p] of pendingBuys) if (p.expires <= Date.now() || (p.chain === d.chain.key && p.token === token && p.sourceMessageId === sourceMessageId)) pendingBuys.delete(id);
       if (pendingBuys.size >= 100) pendingBuys.delete(pendingBuys.keys().next().value!);
       const id = randomBytes(8).toString("hex");
-      pendingBuys.set(id, { chain: d.chain.key, token, amount, slippage: s.buySlippageBps, route, report: report ? { ...report } : null, info: { ...info }, sourceMessageId, expires: Date.now() + 60_000 });
+      pendingBuys.set(id, { wallet: walletId(d), chain: d.chain.key, token, amount, slippage: s.buySlippageBps, route, report: report ? { ...report } : null, info: { ...info }, sourceMessageId, expires: Date.now() + 60_000 });
       const kb = new InlineKeyboard().text("确认买入", `confirm:${id}`).text("取消", `cancel:${id}`);
       if (routePools(route).length > 6) kb.row().text("全部池详情", `pools:${id}`);
-      const text = ["<b>买入前请核对</b>", `链：${d.chain.label}`, `名字：${escapeHtml(info.name.slice(0, 100))}（${escapeHtml(info.symbol.slice(0, 40))}）`, `CA：<code>${token}</code>`,
+      const text = ["<b>买入前请核对</b>", `链：${d.chain.label}`, `钱包：<code>${d.clients.account.address}</code>`, `名字：${escapeHtml(info.name.slice(0, 100))}（${escapeHtml(info.symbol.slice(0, 40))}）`, `CA：<code>${token}</code>`,
         `买入：${formatEther(amount)} ${d.chain.nativeSymbol}`, `预计收到：${fmtUnits(BigInt(route.routeSummary.amountOut), info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))}`, `本次滑点：${s.buySlippageBps / 100}%`,
         `按本次报价最低接受：${fmtUnits(BigInt(route.routeSummary.amountOut) * BigInt(10_000 - s.buySlippageBps) / 10_000n, info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))}`,
         "", ...riskLines(report), "", ...poolLines(route), "", "报价会变化，确认时会再次核对风险和交易池。", "60 秒内有效；此时尚未发送交易。"].join("\n");
@@ -272,8 +281,11 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       info = await services.readToken(d.clients, token);
       if (!info) throw new Error("代币信息读取失败");
       result = await services.sell(d, token, pct, settings(d.chain.key).sellSlippageBps);
-    } catch (e) { await progress(ctx, pending, `❌ 卖出未完成：${errMsg(e)}`); return; }
-    try { state.recordSell(d.chain.key, token, pct); } catch { await progress(ctx, pending, `卖出已成交，但本地记录失败。交易：${result.hash}`); return; }
+    } catch (e) {
+      if (e instanceof ConfirmedTransactionError) state.recordSell(d.chain.key, token, pct, walletId(d), e.hash);
+      await progress(ctx, pending, `${e instanceof ConfirmedTransactionError || e instanceof PendingTransactionError ? "⚠️" : "❌ 卖出未完成："}${errMsg(e)}`); return;
+    }
+    try { state.recordSell(d.chain.key, token, pct, walletId(d), result.hash); } catch { await progress(ctx, pending, `卖出已成交，但本地记录失败。交易：${result.hash}`); return; }
     await progress(ctx, pending, `✅ 卖出成功 ${fmtUnits(result.soldAmount, info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))} → 约 ${fmtUnits(result.receivedNative, 18, 6)} ${d.chain.nativeSymbol}${result.approveHash ? "（含一次授权）" : ""}\n<a href="${d.chain.explorerTx(result.hash)}">查看交易</a>`, true);
     await refreshCard(ctx, d, token, result.blockNumber, sourceMessageId);
   }
@@ -294,7 +306,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     if (!current) return;
     if (current.expires <= Date.now()) { input = null; await ctx.reply("输入已超时，请重新点选要设置的项目"); return; }
     if (/^(取消|cancel)$/i.test(text.trim())) { input = null; await ctx.reply("已取消，设置保持不变", { reply_markup: backKeyboard() }); return; }
-    const d = deps.get(current.chain)!;
+    const d = getDeps(current.chain, current.wallet)!;
     const retry = async (message: string) => { await ctx.reply(`${message}\n请重新输入，或发送“取消”。`); };
     if (current.kind.endsWith("slip")) {
       const bps = parseSlippageInput(text);
@@ -401,42 +413,43 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     }
     const token = extractAddress(ctx.message.text);
     if (token) {
-      const d = deps.get(activeKey())!;
+      const d = getDeps(activeKey())!;
       if (settings(d.chain.key).quickBuy) await requestBuy(ctx, d, token, settings(d.chain.key).buyAmounts[0]);
       else await showCard(ctx, d, token);
     }
   });
-  bot.callbackQuery(new RegExp(`^r:${KEY}:${ADDR}$`), async (ctx) => {
-    const d = dep(ctx, ctx.match[1]); if (!d) return;
-    await ctx.answerCallbackQuery(); await showCard(ctx, d, ctx.match[2] as Address, true);
+  bot.callbackQuery(new RegExp(`^r:${KEY}:${WALLET}:${ADDR}$`), async (ctx) => {
+    const d = dep(ctx, ctx.match[1], ctx.match[2]); if (!d) return;
+    await ctx.answerCallbackQuery(); await showCard(ctx, d, ctx.match[3] as Address, true);
   });
-  bot.callbackQuery(new RegExp(`^t:${KEY}:${ADDR}$`), async (ctx) => {
-    const d = dep(ctx, ctx.match[1]); if (!d) return;
-    const token = ctx.match[2] as Address;
-    const pos = state.position(d.chain.key, token);
+  bot.callbackQuery(new RegExp(`^t:${KEY}:${WALLET}:${ADDR}$`), async (ctx) => {
+    const d = dep(ctx, ctx.match[1], ctx.match[2]); if (!d) return;
+    const token = ctx.match[3] as Address;
+    const pos = state.position(d.chain.key, token, walletId(d));
     if (!pos) { await ctx.answerCallbackQuery("没有这个仓位的买入记录"); return; }
-    if (pos.tp !== null || pos.sl !== null) { state.setRule(d.chain.key, token, { tp: null, sl: null }); await ctx.answerCallbackQuery("已关闭止盈止损"); }
+    if (pos.tp !== null || pos.sl !== null) { state.setRule(d.chain.key, token, { tp: null, sl: null }, walletId(d)); await ctx.answerCallbackQuery("已关闭止盈止损"); }
     else if (state.defaultRule.tp === null && state.defaultRule.sl === null) { await ctx.answerCallbackQuery("先在首页设置默认止盈止损"); return; }
-    else { state.setRule(d.chain.key, token, state.defaultRule); await ctx.answerCallbackQuery("已开启止盈止损"); }
+    else { state.setRule(d.chain.key, token, state.defaultRule, walletId(d)); await ctx.answerCallbackQuery("已开启止盈止损"); }
     await showCard(ctx, d, token, true);
   });
-  bot.callbackQuery(new RegExp(`^custom:([bs]):${KEY}:${ADDR}$`), async (ctx) => {
-    const d = dep(ctx, ctx.match[2]); if (!d) return;
-    await ctx.answerCallbackQuery(); await prompt(ctx, ctx.match[1] === "b" ? "buy" : "sell", d.chain.key, ctx.match[3] as Address, ctx.callbackQuery.message?.message_id);
+  bot.callbackQuery(new RegExp(`^custom:([bs]):${KEY}:${WALLET}:${ADDR}$`), async (ctx) => {
+    const d = dep(ctx, ctx.match[2], ctx.match[3]); if (!d) return;
+    await ctx.answerCallbackQuery(); await prompt(ctx, ctx.match[1] === "b" ? "buy" : "sell", d.chain.key, ctx.match[4] as Address, ctx.callbackQuery.message?.message_id);
+    if (input) input.wallet = walletId(d);
   });
-  bot.callbackQuery(new RegExp(`^b:${KEY}:${ADDR}:(\\d+):([0-9a-f]{6})$`), async (ctx) => {
-    const d = dep(ctx, ctx.match[1]); if (!d) return;
+  bot.callbackQuery(new RegExp(`^b:${KEY}:${WALLET}:${ADDR}:(\\d+):([0-9a-f]{6})$`), async (ctx) => {
+    const d = dep(ctx, ctx.match[1], ctx.match[2]); if (!d) return;
     const amounts = settings(d.chain.key).buyAmounts;
-    const amount = amounts[Number(ctx.match[3])];
-    if (amount === undefined || ctx.match[4] !== presetVersion(amounts)) { await ctx.answerCallbackQuery("买入档位已改变，请刷新卡片"); return; }
-    await ctx.answerCallbackQuery("正在准备买入信息…"); await requestBuy(ctx, d, ctx.match[2] as Address, amount, ctx.callbackQuery.message?.message_id);
+    const amount = amounts[Number(ctx.match[4])];
+    if (amount === undefined || ctx.match[5] !== presetVersion(amounts)) { await ctx.answerCallbackQuery("买入档位已改变，请刷新卡片"); return; }
+    await ctx.answerCallbackQuery("正在准备买入信息…"); await requestBuy(ctx, d, ctx.match[3] as Address, amount, ctx.callbackQuery.message?.message_id);
   });
   bot.callbackQuery(/^confirm:([0-9a-f]{16})$/, async (ctx) => {
     const id = ctx.match[1]; const p = pendingBuys.get(id);
     // 任何 await 之前取走确认，阻止并发双击发送两次交易。
     pendingBuys.delete(id);
     if (!p || p.expires <= Date.now()) { await ctx.answerCallbackQuery("确认已过期或已处理，请重新点买入"); return; }
-    const d = dep(ctx, p.chain); if (!d) return;
+    const d = dep(ctx, p.chain, p.wallet); if (!d) return;
     if (settings(p.chain).buySlippageBps !== p.slippage) { await ctx.answerCallbackQuery("滑点已改变，请重新确认"); return; }
     await ctx.answerCallbackQuery("已确认，正在提交买入…");
     await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() }).catch(() => undefined);
@@ -454,11 +467,11 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     const pools = routePools(p.route);
     for (let i = 0; i < pools.length; i += 10) await ctx.reply(poolLines({ ...p.route, routeSummary: { ...p.route.routeSummary, route: [pools.slice(i, i + 10)] } }, 10).join("\n"), HTML);
   });
-  bot.callbackQuery(new RegExp(`^s:${KEY}:${ADDR}:(\\d+(?:\\.\\d{1,2})?)$`), async (ctx) => {
-    const d = dep(ctx, ctx.match[1]); if (!d) return;
-    const pct = parseSellPercentage(ctx.match[3]);
+  bot.callbackQuery(new RegExp(`^s:${KEY}:${WALLET}:${ADDR}:(\\d+(?:\\.\\d{1,2})?)$`), async (ctx) => {
+    const d = dep(ctx, ctx.match[1], ctx.match[2]); if (!d) return;
+    const pct = parseSellPercentage(ctx.match[4]);
     if (pct === null) { await ctx.answerCallbackQuery("无效的卖出比例"); return; }
-    await ctx.answerCallbackQuery("卖出提交中…"); await executeSell(ctx, d, ctx.match[2] as Address, pct, ctx.callbackQuery.message?.message_id);
+    await ctx.answerCallbackQuery("卖出提交中…"); await executeSell(ctx, d, ctx.match[3] as Address, pct, ctx.callbackQuery.message?.message_id);
   });
   bot.on("callback_query:data", (ctx) => ctx.answerCallbackQuery("按钮已过期，请刷新卡片或返回首页"));
   bot.catch((err) => console.error("机器人处理失败：", errMsg(err.error)));

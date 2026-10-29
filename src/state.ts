@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 // cost 是买入花费的原生币（wei，字符串存储）；tp/sl 是百分比，null 表示不启用
-export type Position = { chain: string; token: string; cost: bigint; tp: number | null; sl: number | null };
+export type Position = { wallet: string; chain: string; token: string; cost: bigint; tp: number | null; sl: number | null };
 export type Rule = { tp: number | null; sl: number | null };
 
 type StoredPosition = { cost: string; tp: number | null; sl: number | null };
@@ -24,17 +24,21 @@ type StateData = {
   positions: Record<string, StoredPosition>;
   chainSettings: Record<string, ChainSettings>;
   display: DisplaySettings;
+  activeWallet: string;
+  walletTokens: Record<string, Record<string, string[]>>;
+  appliedTransactions: string[];
 };
 
-const posKey = (chain: string, token: string) => `${chain}:${token.toLowerCase()}`;
+const posKey = (chain: string, token: string, wallet = "main") => `${wallet === "main" ? "" : `${wallet}:`}${chain}:${token.toLowerCase()}`;
 
 export class State {
   private data: StateData;
   private file: string;
+  private committed: StateData;
 
   constructor(file: string) {
     this.file = file;
-    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {}, chainSettings: {}, display: defaultDisplay() };
+    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {}, chainSettings: {}, display: defaultDisplay(), activeWallet: "main", walletTokens: {}, appliedTransactions: [] };
     try {
       const p = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
       // 旧版本的 tokens 是数组（只有 BSC）
@@ -47,10 +51,14 @@ export class State {
         positions: (p.positions as Record<string, StoredPosition> | undefined) ?? {},
         chainSettings: (p.chainSettings as Record<string, ChainSettings> | undefined) ?? {},
         display: { ...defaultDisplay(), ...(p.display as Partial<DisplaySettings> | undefined) },
+        activeWallet: typeof p.activeWallet === "string" ? p.activeWallet : "main",
+        walletTokens: (p.walletTokens as StateData["walletTokens"] | undefined) ?? {},
+        appliedTransactions: (p.appliedTransactions as string[] | undefined) ?? [],
       };
-    } catch {
-      // 首次运行或文件损坏：从空状态开始
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("本地状态文件无法读取或已损坏，请保留原文件并检查，未自动改写");
     }
+    this.committed = structuredClone(this.data);
   }
 
   get slippageBps(): number | null {
@@ -93,6 +101,8 @@ export class State {
     this.data.activeChain = key;
     this.save();
   }
+  get activeWallet(): string { return this.data.activeWallet; }
+  setActiveWallet(id: string): void { this.data.activeWallet = id; this.save(); }
 
   get defaultRule(): Rule {
     return this.data.defaultRule;
@@ -103,50 +113,61 @@ export class State {
     this.save();
   }
 
-  tokens(chain: string): string[] {
-    return this.data.tokens[chain] ?? [];
+  tokens(chain: string, wallet = "main"): string[] {
+    return (wallet === "main" ? this.data.tokens : this.data.walletTokens[wallet])?.[chain] ?? [];
   }
 
-  position(chain: string, token: string): Position | null {
-    const p = this.data.positions[posKey(chain, token)];
-    return p ? { chain, token: token.toLowerCase(), cost: BigInt(p.cost), tp: p.tp, sl: p.sl } : null;
+  position(chain: string, token: string, wallet = "main"): Position | null {
+    const p = this.data.positions[posKey(chain, token, wallet)];
+    return p ? { wallet, chain, token: token.toLowerCase(), cost: BigInt(p.cost), tp: p.tp, sl: p.sl } : null;
   }
 
   positions(): Position[] {
     return Object.entries(this.data.positions).map(([k, p]) => {
-      const i = k.indexOf(":");
-      return { chain: k.slice(0, i), token: k.slice(i + 1), cost: BigInt(p.cost), tp: p.tp, sl: p.sl };
+      const parts = k.split(":");
+      const [wallet, chain, token] = parts.length === 2 ? ["main", ...parts] : parts;
+      return { wallet, chain, token, cost: BigInt(p.cost), tp: p.tp, sl: p.sl };
     });
   }
 
   // 买入后调用：记录代币、累加成本；新仓位套用默认止盈止损，老仓位保留自己的规则
-  recordBuy(chain: string, token: string, spent: bigint): void {
-    const list = (this.data.tokens[chain] ??= []);
+  recordBuy(chain: string, token: string, spent: bigint, wallet = "main", hash?: string): void {
+    if (this.applied(chain, wallet, hash)) return;
+    token = token.toLowerCase();
+    const tokens = wallet === "main" ? this.data.tokens : (this.data.walletTokens[wallet] ??= {});
+    const list = (tokens[chain] ??= []);
     if (!list.includes(token)) list.push(token);
-    const key = posKey(chain, token);
+    const key = posKey(chain, token, wallet);
     const old = this.data.positions[key];
     this.data.positions[key] = old
       ? { ...old, cost: (BigInt(old.cost) + spent).toString() }
       : { cost: spent.toString(), tp: this.data.defaultRule.tp, sl: this.data.defaultRule.sl };
-    this.save();
+    this.markApplied(chain, wallet, hash); this.save();
   }
 
   // 卖出后调用：按比例扣减成本，卖光则删除仓位
-  recordSell(chain: string, token: string, pct: number): void {
-    const key = posKey(chain, token);
+  recordSell(chain: string, token: string, pct: number, wallet = "main", hash?: string): void {
+    if (this.applied(chain, wallet, hash)) return;
+    const key = posKey(chain, token, wallet);
     const old = this.data.positions[key];
-    if (!old) return;
     if (pct >= 100) delete this.data.positions[key];
-    else old.cost = ((BigInt(old.cost) * BigInt(10_000 - Math.round(pct * 100))) / 10_000n).toString();
-    this.save();
+    else if (old) old.cost = ((BigInt(old.cost) * BigInt(10_000 - Math.round(pct * 100))) / 10_000n).toString();
+    this.markApplied(chain, wallet, hash); this.save();
   }
 
-  removePosition(chain: string, token: string): void {
-    if (delete this.data.positions[posKey(chain, token)]) this.save();
+  private applied(chain: string, wallet: string, hash?: string): boolean {
+    return !!hash && this.data.appliedTransactions.includes(`${wallet}:${chain}:${hash.toLowerCase()}`);
+  }
+  private markApplied(chain: string, wallet: string, hash?: string): void {
+    if (hash) this.data.appliedTransactions.push(`${wallet}:${chain}:${hash.toLowerCase()}`);
   }
 
-  setRule(chain: string, token: string, rule: Rule): void {
-    const p = this.data.positions[posKey(chain, token)];
+  removePosition(chain: string, token: string, wallet = "main"): void {
+    if (delete this.data.positions[posKey(chain, token, wallet)]) this.save();
+  }
+
+  setRule(chain: string, token: string, rule: Rule, wallet = "main"): void {
+    const p = this.data.positions[posKey(chain, token, wallet)];
     if (!p) return;
     p.tp = rule.tp;
     p.sl = rule.sl;
@@ -154,9 +175,12 @@ export class State {
   }
 
   private save(): void {
+    try {
     mkdirSync(dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify(this.data));
     renameSync(tmp, this.file);
+    this.committed = structuredClone(this.data);
+    } catch (error) { this.data = structuredClone(this.committed); throw error; }
   }
 }

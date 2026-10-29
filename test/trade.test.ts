@@ -5,7 +5,7 @@ import { maxUint256 } from "viem";
 import { CHAINS } from "../src/chains.ts";
 import { routeIdentity } from "../src/kyber.ts";
 import type { Route } from "../src/kyber.ts";
-import { buy, sell, serial } from "../src/trade.ts";
+import { buy, sell, serial, queueKey } from "../src/trade.ts";
 import type { TradeDeps } from "../src/trade.ts";
 
 const TOKEN = "0x55d398326f99059ff775485246999027b3197955";
@@ -71,7 +71,7 @@ test("自定义小数卖出比例在交易层按整数基点计算", async (t) =
 test("排队期间过期的确认在交易层被拒绝，风控在出队后执行", async (t) => {
   const f = fixture(t);
   let release!: () => void;
-  const blocking = serial(() => new Promise<void>((resolve) => { release = resolve; }));
+  const blocking = serial(() => new Promise<void>((resolve) => { release = resolve; }), queueKey(f.d));
   await new Promise((resolve) => setImmediate(resolve));
   let checks = 0;
   const now = Date.now();
