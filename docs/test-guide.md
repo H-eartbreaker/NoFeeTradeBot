@@ -2,13 +2,16 @@
 
 编写日期：2026-10-29。本文档在所有功能开发完成后编写。
 
-## 0. 当前状态（先看这里）
+## 0. 当前状态（2026-10-29 更新）
 
-- 开发期间按要求只运行 `npm run check`（`tsc --noEmit`），**没有运行过 `npm test`**。
-- 因此，本文档列出的测试**都未在当前代码上运行过**，不能据此声称通过。
-- 第八期 Solana 相关代码（`src/sol-wallet.ts`、`src/sol-chain.ts`、`src/sol-trade.ts`、`src/sol-panel.ts`、`src/sol-settings.ts`）**没有任何测试**。
-- 第六期（X 社交与狙击）按决定跳过；第七期（网页终端）按决定不做。
-- `npm run check` 在最后一次功能提交（`287affe`）时通过。
+用户已授权先做不用付费、不动真钱的测试。
+
+- **21 个测试文件，128 项测试全部通过，失败 0，跳过 0**；类型检查通过。
+- 本轮新增 39 项用例，覆盖 Solana、限价/市值/定投、订单中心、追踪列表与风控边界。
+- 四条 EVM 链的真实卡片/买前确认、稳定币双向报价/未签名构建、跨链报价通过。
+- Solana 原生余额/持仓、USDC 信息、双向报价/未签名构建通过。原 PublicNode 节点拒绝持仓查询（403），默认已改成实测能完成查询的官方免费 RPC。
+- 没有读取真实私钥来测试、没有签名或广播真实交易；没有为此次测试重启运行中的机器人。
+- 第六期仍跳过，第七期仍不做网页。完整结果、修复与剩余限制见 [本轮测试结果](test-results-2026-10-29.md)。
 
 ## 1. 测试计划
 
@@ -35,7 +38,7 @@
 - 框架：Node 内置 `node:test`，断言使用 `node:assert/strict`。
 - 依赖：多数测试注入假的链上读取、路由、风控和交易函数，不发送真实交易。
 - 临时文件：状态和钱包相关测试使用临时目录，结束后删除。
-- 测试入口：以 `package.json` 中的 `test` 脚本为准（当前为 `node --test test/`）。运行前请确认它确实会执行 `test/` 下全部 `*.test.ts`，如果不会，改用第 2 节的单文件命令逐个运行。
+- 测试入口：以 `package.json` 中的 `test` 脚本为准（当前为 `node --test test/`，本轮确认能发现全部 21 个文件）。运行前请确认它确实会执行 `test/` 下全部 `*.test.ts`，如果不会，改用第 2 节的单文件命令逐个运行。
 
 ### 1.4 验收标准（运行后应满足）
 
@@ -52,25 +55,25 @@
 npm run check
 
 # 2. 全部单元和交互测试（不需要 .env，不访问真实链上数据）
-npm test
+env -u SOLANA_PRIVATE_KEY npm test
 
 # 3. 单个测试文件
 node --test test/util.test.ts
 
 # 4. 只读冒烟（需要网络，可能需要代理）
-node --env-file=.env scripts/smoke.ts [链key] [代币地址]
+NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:7897 node scripts/smoke.ts [链key] [代币地址]
 NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:7897 node scripts/ui-smoke.ts
 ```
 
 注意：
-- `scripts/ui-smoke.ts` 会用真实只读数据走卡片和买前确认，但拦截所有 Telegram 消息和交易发送。它不接受参数。
+- `scripts/ui-smoke.ts` 会用真实只读数据走卡片和买前确认，但拦截所有 Telegram 消息和交易发送。可以在命令后指定链 key；默认检查四条链。
 - `scripts/funds-smoke.ts`、`scripts/latency.ts` 是真实只读查询，不发送交易。
 - `scripts/setup.ts`、`scripts/new-wallet.ts`、`scripts/import-wallet.ts` 会生成或导入私钥，**不属于测试，不要在测试流程中运行**。
 - 测试中不要使用真实私钥。应使用假私钥，例如 `"0x" + "1".repeat(64)`。
 
 ## 3. 测试清单
 
-共 15 个测试文件，89 个用例（按 `test(` 计数核对）。下列要点是根据用例标题整理的摘要，具体断言以测试文件为准。
+当前共 21 个测试文件，128 个用例（本轮实际执行确认）。以下 3.1～3.15 为原有用例，新增文件与数量见本轮测试结果。下列要点是根据用例标题整理的摘要，具体断言以测试文件为准。
 
 ### 3.1 `test/util.test.ts`（7 个）
 
@@ -111,7 +114,7 @@ NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:7897 node scripts/ui-smoke.ts
 - 盈亏图片输出 720 像素宽的 PNG，并转义代币名称
 - 没有可核对持仓、本金未知或数量被省略时仍能渲染
 
-### 3.6 `test/trade.test.ts`（6 个）
+### 3.6 `test/trade.test.ts`（7 个）
 
 - 确认后换池或风控失败，实际交易层不广播
 - 确认后的新报价不能低于确认页的最低可接受数量
@@ -119,6 +122,7 @@ NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:7897 node scripts/ui-smoke.ts
 - 自定义小数卖出比例在交易层按整数基点计算
 - 排队期间过期的确认在交易层被拒绝，风控在出队后执行
 - 金额卖出使用确认的精确代币数并保留最低输出；余额或价格变化时拒发
+- 自动订单排队或准备交易后暂停，买卖发送前再次检查，均不广播
 
 ### 3.7 `test/funds.test.ts`（11 个）
 
@@ -233,51 +237,50 @@ NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:7897 node scripts/ui-smoke.ts
 | `kyber.ts` | 有 | 10 个测试文件导入（假依赖为主） |
 | `honeypot.ts`、`assets.ts`、`money.ts` | 部分 | 各有 1 个测试文件导入，只覆盖少量场景 |
 | `token.ts` | 无 | 没有任何测试导入 |
-| `risk-policy.ts` | 间接 | 没有直接导入，只在 `bot.test` 的貔貅拦截场景中被执行到 |
+| `risk-policy.ts` | 部分 | risk-policy 直接测试未知值、价差、黑名单、输入边界 |
 | `chains.ts` | 有 | 8 个测试文件导入 |
-| `config.ts` | 有 | `util.test` 的 `loadConfig` 用例；新增的 `SOLANA_RPC_URL` 默认值没有测试 |
-| `state.ts` | 有 | `util.test` 的 `State` 用例；新增的 `solanaSlippageBps` 没有测试 |
-| `orders.ts`、`orders-panel.ts`、`order-runner.ts`、`order-market.ts` | 无 | 没有任何测试 |
-| `tracked-panel.ts` | 无 | 没有任何测试 |
+| `config.ts` | 有 | `util.test` 的 `loadConfig` 用例；sol-core 新增默认节点和自定义节点测试 |
+| `state.ts` | 有 | `util.test` 的 `State` 用例；sol-core 和 sol-panel 覆盖 Solana 分链参数与重启保存 |
+| `orders.ts`、`orders-panel.ts`、`order-runner.ts`、`order-market.ts` | 部分 | 新增 orders、order-runner、automation-panels 测试；实际交易发送由替身模拟 |
+| `tracked-panel.ts` | 有 | automation-panels 覆盖导入、去重、备注、导出、删除与白名单 |
 | `http.ts`、`native-fetch.ts` | 无 | 没有任何测试 |
-| `menu.ts` | 无 | 命令菜单（含新增的 `/sol`）没有测试 |
+| `menu.ts` | 无 | 命令注册 API 没有单独模拟测试；Solana 已从独立命令菜单入口改为统一切链 |
 | `index.ts` | 无 | 启动入口，没有测试 |
-| **`sol-wallet.ts`** | 无 | 第八期新增，没有测试 |
-| **`sol-chain.ts`** | 无 | 第八期新增，没有测试 |
-| **`sol-trade.ts`** | 无 | 第八期新增，没有测试 |
-| **`sol-panel.ts`** | 无 | 第八期新增，没有测试 |
+| **`sol-wallet.ts`** | 部分 | 临时钱包、权限、锁、格式、签名器地址一致 |
+| **`sol-chain.ts`** | 部分 | 模拟账户与 HTTP，加真实只读冒烟 |
+| **`sol-trade.ts`** | 部分 | 余额/比例检查、队列、确认/失败/过期/超时/断网；真实签名广播未验收 |
+| **`sol-panel.ts`** | 部分 | 模拟依赖覆盖统一界面、确认、切链、四种开关组合及不支持提示 |
 
 ## 5. 未覆盖项及原因
 
 | 未覆盖项 | 原因 |
 | --- | --- |
-| Solana 全部模块 | 第八期在用户要求下最后编写测试，本次开发只做了类型检查。测试建议见第 7 节。 |
-| 追踪钱包（`tracked-panel.ts`） | 没有测试。尚未确认其行为范围，需要先读代码再决定测试内容。 |
-| 限价、市值、定投订单（`orders*`、`order-runner.ts`、`order-market.ts`） | 没有测试。目前只有止盈止损调度的测试。 |
+| Solana 真实签名广播、真实到账与费用 | 本轮只用模拟依赖和未签名构建；真实资金验收未授权。 |
+| 追踪钱包全部分页/50 地址上限 | 已测基本管理流程，完整压力和边界仍可补。 |
+| 自动单所有网络故障和长期运行组合 | 已覆盖核心调度、预算、取消和恢复；没有连续运行数天或进行真实成交。 |
 | 外部 API 客户端（`token.ts`、`honeypot.ts` 等） | 依赖第三方接口。需要录制或模拟响应，尚未补齐。 |
 | 网络层（`http.ts`、`native-fetch.ts`） | 依赖代理和网络环境，没有模拟。 |
 | 命令菜单与启动入口（`menu.ts`、`index.ts`） | 依赖 Telegram API 和进程启动，没有模拟。 |
 | 真实链上交易 | 测试不允许花真钱。真实交易只能在用户明确给出链、代币和金额后，手动验证。 |
 
-## 6. 已知风险：改动之后没有运行过测试
+## 6. 验证边界
 
-以下测试可能因为第八期改动而失败。这是**根据代码推断的风险，尚未运行确认**：
-
-- `test/bot.test.ts`：主菜单新增了一行「Solana 买卖」按钮。如果测试断言按钮数量或行数，需要更新。
-- `test/button-icons.test.ts`：新增了 `sol:` 图标规则。如果测试检查每个按钮都有或都没有图标，需要更新。
-- `test/util.test.ts`：`loadConfig` 新增 `solanaRpcUrl` 字段，`State` 新增 `solanaSlippageBps` 字段。如果测试做整体对象比较，需要更新。
-- 测试进程环境中如果已设置 `SOLANA_PRIVATE_KEY`，`SolanaWallet` 构造时会读取它。测试应确保该变量未设置。
+- 测试通过只说明断言覆盖的行为，不能当作全部功能或真实成交保证。
+- 本轮未使用 Telegram 真账号做全菜单人工验收，也未为了测试重启/停止真实机器人。
+- Solana 核心测试只在临时 `.env` 生成测试钱包；主项目 `.env` 和真实钱包未用于签名测试。
+- 运行测试前清除 `SOLANA_PRIVATE_KEY` 环境变量；新增 Solana UI 测试用依赖替身，不读取真实 `.env`。
+- 以下第 7 节及追加验收为详细建议与历史待办；已完成范围以顶部结果与本轮报告为准。
 
 ## 7. 给后续 Agent 的 Solana 测试建议
 
-按要求，测试在全部功能完成后统一编写。建议覆盖以下内容，全部使用假 RPC 和假私钥，不要使用真实钱包：
+本轮已实现其中多数核心场景；未覆盖组合仍可继续补齐。全部使用假 RPC 和假私钥，不要使用真实钱包：
 
 1. `sol-wallet.ts`
    - 生成后写入 `.env`，权限为 600，且 `SOLANA_PRIVATE_KEY` 行格式正确
    - `.env` 已有 `SOLANA_PRIVATE_KEY` 时拒绝，不覆盖
    - 空的 `SOLANA_PRIVATE_KEY=` 行被清理
    - `.env` 不存在时拒绝；锁文件存在时拒绝，原文件不变
-   - 私钥不出现在返回值以外的任何输出中（日志、错误信息）
+   - 私钥不出现在返回值、日志、错误或聊天；生成接口只返回公开地址
    - 格式错误的私钥（非 base58、长度不是 64 字节）在启动时报错
 2. `sol-chain.ts`
    - `holdings` 按 mint 聚合两个 Token 程序的账户，跳过余额为 0 的账户
@@ -291,10 +294,10 @@ NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:7897 node scripts/ui-smoke.ts
    - 买入余额不足（需保留 0.01 SOL）时拒绝；卖出时 SOL 不足 0.005 SOL 时拒绝
    - 卖出百分比按整数计算，100% 使用全部余额
 4. `sol-panel.ts`
-   - `parseSol` 边界：`0`、`0.000000001`、`100`、`100.000000001`、`1e3`、`-1`
-   - 回调数据长度不超过 64 字节（最长为 `sol:s:<44 位 mint>:100`）
+   - `parseSolAmount` 边界：`0`、`0.000000001`、`100`、`100.000000001`、`1e3`、`-1`
+   - 回调数据长度不超过 64 字节（包括带金额版本号的买入按钮和小数卖出比例）
    - 确认页 60 秒过期后，点击确认不执行交易
-   - 自定义输入中粘贴 `0x` 地址时退出 Solana 输入，交给 EVM 流程
+   - 自定义输入中粘贴 `0x` 地址时退出 Solana 输入，提示核对当前链；Solana 模式下不能进入 EVM 买卖
    - 非代币地址给出明确提示，不进入买卖流程
 5. `state.ts` 和 `config.ts`
    - `solanaSlippageBps` 缺失或不是整数时默认 100
