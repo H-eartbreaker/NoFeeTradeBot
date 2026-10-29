@@ -96,7 +96,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   async function home(ctx: Context) {
     const d = deps.get(activeKey())!;
     const s = settings(d.chain.key);
-    await panel(ctx, ["<b>我的交易终端</b>", `当前链：${d.chain.label}`, `钱包：<code>${d.clients.account.address}</code>`,
+    await panel(ctx, ["<b>demo bot</b>", `当前链：${d.chain.label}`, `钱包：<code>${d.clients.account.address}</code>`,
       `买入滑点 ${s.buySlippageBps / 100}% · 卖出滑点 ${s.sellSlippageBps / 100}%`, `买前确认：${s.buyConfirmation ? "开启" : "关闭"}`,
       "", "选择下面的功能，或直接发送代币合约地址。"].join("\n"), mainKeyboard());
   }
