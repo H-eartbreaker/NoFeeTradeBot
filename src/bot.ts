@@ -101,7 +101,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       "", "选择下面的功能，或直接发送代币合约地址。"].join("\n"), mainKeyboard());
   }
   async function help(ctx: Context) {
-    await panel(ctx, ["<b>使用说明</b>", "1. 先选交易链，再发送代币 CA。", "2. 在卡片里选金额，或点“自定义买入”后直接发数字。", "3. 买前确认开启时，核对链、CA、名字、池和税费后再确认。", "4. 有持仓后可选卖出比例，也能自定义比例。", "5. 设置里点要修改的项目，直接回复数字；发送“取消”退出。", "", "自动止盈止损需要机器人持续运行；当前每 20 秒检查一次。", "菜单和斜杠命令都可以使用。"].join("\n"), backKeyboard());
+    await panel(ctx, ["<b>使用说明</b>", "1. 先选交易链，再发送代币 CA。", "2. 在卡片里选金额，或点“自定义买入”后直接发数字。", "3. 买前确认开启时，核对链、CA、名字、池和税费后再确认。", "4. 有持仓后可选卖出比例，也能自定义比例。", "5. 设置里点要修改的项目，直接回复数字；发送“取消”退出。", "", "自动止盈止损需要机器人持续运行；每 3 秒尝试检查一次，上轮未完成时不重复启动。", "菜单和斜杠命令都可以使用。"].join("\n"), backKeyboard());
   }
   async function showChains(ctx: Context) {
     const kb = new InlineKeyboard();
@@ -286,7 +286,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     const [tp, sl] = parts.map(Number);
     if (parts.length !== 2 || !parts.every((p) => /^\d+(?:\.\d{1,2})?$/.test(p)) || tp > 10_000 || sl >= 100 || (tp === 0 && sl === 0)) return false;
     state.setDefaultRule({ tp: tp > 0 ? tp : null, sl: sl > 0 ? sl : null });
-    await ctx.reply(`新买入默认：${ruleText(state.defaultRule)}\n每 20 秒检查，触发后全部卖出；已有仓位请在代币卡片里单独开启。`);
+    await ctx.reply(`新买入默认：${ruleText(state.defaultRule)}\n每 3 秒尝试检查，触发后全部卖出；已有仓位请在代币卡片里单独开启。`);
     return true;
   }
   async function consumeInput(ctx: Context, text: string) {

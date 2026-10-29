@@ -5,7 +5,7 @@ import { balanceOf, sell } from "./trade.ts";
 import type { TradeDeps } from "./trade.ts";
 import { errMsg, fmtUnits } from "./util.ts";
 
-const INTERVAL_MS = 20_000;
+export const INTERVAL_MS = 3_000;
 const MAX_FAILS = 3;
 
 // 价值相对成本涨到 +tp% 返回 "tp"，跌到 -sl% 返回 "sl"；止损优先
