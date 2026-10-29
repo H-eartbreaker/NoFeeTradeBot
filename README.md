@@ -1,4 +1,4 @@
-# Trading Bot (Telegram Multi-Chain Trading Terminal)
+# NoFeeTradeBot (Telegram Multi-Chain Trading Bot)
 
 English | [中文](README.zh-CN.md)
 
@@ -21,7 +21,10 @@ A Telegram trading bot that runs on your own computer. Send a token contract add
 
 ## About
 
-The bot runs locally, with your own Telegram account and your own wallet. It is not a hosted platform: your private key and funds stay in your own computer and wallet.
+The name **NoFee** means the bot itself adds no platform fee and has no subscription. It does not mean trading is free. Every trade still pays the real on-chain costs: gas, DEX or router fees, cross-chain service fees, and a Jito tip if you enable Jito.
+
+- **No platform fee**: The project takes no cut, has no subscription, and deducts nothing extra from your trades.
+- **Not custodial**: The bot runs on your own computer with your own Telegram account and wallet. Your private key stays in the local `.env` file, and funds stay in your wallet.
 
 - **Single user**: Only the Telegram user ID set as `ALLOWED_USER_ID` in `.env` can operate it. Messages and button callbacks from anyone else are rejected.
 - **Keys stay local**: The private key is stored in the project's `.env` file (permissions 600). It is not sent to chats or logs.
