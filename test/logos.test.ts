@@ -7,7 +7,7 @@ import type { TestContext } from "node:test";
 import { Bot, InlineKeyboard } from "grammy";
 import type { MessageEntity } from "grammy/types";
 import { CHAINS } from "../src/chains.ts";
-import { extractLogos, Logos, registerLogos, stripCustomEmoji } from "../src/logos.ts";
+import { extractLogos, LOGO_CHAINS, Logos, registerLogos, stripCustomEmoji } from "../src/logos.ts";
 import { State } from "../src/state.ts";
 
 const TEXT = "🟦 Base: 0.001 💎 ($2)\n💠 Ethereum: 0 💎 ($0)\n🟨 Binance: 1 🟡 ($700)\n🪶 Robinhood: 0 💎 ($0)\n🟪 Solana: 0 🟣 ($0)";
@@ -68,6 +68,34 @@ test("导入先预览，白名单限制，确认只保存图标不保存转发�
   assert.ok(!saved.includes(ca)); assert.ok(!saved.includes("$700"));
   await f.callback(confirm); assert.match(f.calls.at(-1)!.text!, /过期/);
   const reload = new State(f.file); assert.deepEqual(reload.logos, f.state.logos);
+});
+test("截图中 19 条链都能收藏，名字别名归一，未知链不会错误归到罗宾汉", () => {
+  const text = LOGO_CHAINS.map((c) => `🟦 ${c.aliases[0]}: 0 💎 ($0)`).join("\n");
+  const found = extractLogos(text, entities(text));
+  assert.equal(Object.keys(found).length, 19);
+  for (const c of LOGO_CHAINS) assert.ok(found[c.key]?.chain && found[c.key]?.native, c.label);
+  const other = "🟦 UnknownChain: 0 💎 ($0)";
+  assert.deepEqual(extractLogos(other, entities(other)), {});
+  const alias = "🟦 xlayer: 0 💎 ($0)\n🟦 罗宾汉链: 0 💎 ($0)";
+  assert.deepEqual(Object.keys(extractLogos(alias, entities(alias))).sort(), ["rh", "xlayer"]);
+});
+test("一次导入收藏未启用链，重启后能复用，二次导入保留已有图标", async (t) => {
+  const f = fixture(t); f.state.setLogos({ chains: { base: { chain: "9999", native: "9998" } } });
+  const text = LOGO_CHAINS.filter((c) => !["base", "bsc", "eth", "rh"].includes(c.key)).map((c) => `🟦 ${c.label}: 0 💎 ($0)`).join("\n");
+  await f.callback("logos:import"); await f.send(text, entities(text));
+  assert.match(f.calls.at(-1)!.text!, /Solana.*收藏备用/);
+  assert.ok(!f.state.logos.chains.solana);
+  await f.callback(f.button("logos:save:"));
+  assert.equal(Object.keys(f.state.logos.chains).length, 16);
+  assert.equal(f.state.logos.chains.base.chain, "9999");
+  assert.match(f.calls.at(-1)!.text!, /已收藏备用：15 条链/);
+  assert.ok(f.calls.at(-1)!.text!.length < 4096);
+  const restarted = new Logos(new State(f.file));
+  assert.match(restarted.chain({ key: "solana", label: "Solana" }), /tg-emoji/);
+  assert.equal(f.escaped(), 0);
+  await f.callback("logos:toggle");
+  assert.equal(Object.keys(f.state.logos.chains).length, 16);
+  assert.equal(f.logos.savedNative("solana"), "已保存");
 });
 test("取消、超时和其他命令不会误保存，截图或无表情消息继续提示", async (t) => {
   const f = fixture(t);

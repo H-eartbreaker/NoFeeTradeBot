@@ -1,12 +1,14 @@
 # 链 Logo
 
-支持 BSC、Base、Ethereum、Robinhood 的链图标和原生币图标。Logo 只影响显示，不新增交易链。
+支持收藏截图中 19 条链的链图标和币种图标：Base、Ethereum、BNB Chain / Binance、Abstract、Avalanche、HyperEVM、Arbitrum、Ink、Story、X Layer、Plasma、UniChain、Monad、MegaETH、Tempo、Robinhood、Arc、Stable、Solana。Logo 目录独立于交易配置，收藏不会新增交易链。
 
 ## 使用
 
 代码更新后，在自行重启的机器人里打开「设置 → 链 Logo → 识别转发消息中的 Logo」，将 Based Bot 那条带图标和链名的原余额消息转发过来。核对预览，再点「确认保存」。截图不能提供 Telegram 自定义表情编号。
 
 之后首页、余额、代币卡片、买前确认会显示链图标，链选择和设置按钮会显示对应按钮图标；余额中的 BNB / ETH 也可显示原生币图标。可随时关闭显示，编号仍保留。
+
+未启用交易的链显示在「已收藏备用」，重启后仍保留。以后接入新链时按 `LOGO_CHAINS` 中相同的 key 复用编号，无需重新寻找或导入。再次导入只合并识别到的图标，不删除已收藏的其他链。旧版只识别当前启用链，因此已使用旧版导入的用户需要在新版重新转发一次原消息，才能保存其余图标。
 
 仅白名单私聊可以导入。识别期间收到 CA、余额文字或图片都不会触发买卖。只保存链与图标编号，不保存原消息、余额、地址或转发来源。未设置的图标继续显示链名/币名。
 
@@ -15,5 +17,7 @@ Telegram 要求机器人拥有者有 Premium，或机器人购买过额外用户
 ## 验证
 
 类型检查及 40 项离线测试通过，覆盖 UTF-16 表情位置、四链映射、白名单、预览后保存、取消/超时、重启保留、显示开关和明确拒绝后的文字回退。使用模拟图标编号、临时状态和拦截的 Telegram API，不访问真实配置、不发送交易。实际 Logo 外观仍需导入原消息并在 Telegram 中确认。
+
+19 链扩展另行验证：类型检查及 7 项 Logo 测试，覆盖全目录识别、别名、忽略未知链、备用展示、重启复用和重复导入保留旧配置。截图已确认前一版四链真实图标能显示；其余真实编号仍需新版重新接收原消息。
 
 依据：[Telegram 官方格式说明](https://core.telegram.org/bots/api/formatting.md)、[Bot API 9.4 更新](https://core.telegram.org/bots/api-changelog)（支持自定义表情按钮图标与 Premium 拥有者的机器人发送自定义表情）。
