@@ -11,7 +11,7 @@ const ID = /^[1-9]\d{0,19}$/;
 export const LOGO_CHAINS = [
   { key: "base", label: "Base", aliases: ["Base"] },
   { key: "eth", label: "Ethereum", aliases: ["Ethereum", "ETH"] },
-  { key: "bsc", label: "BNB Chain", aliases: ["BNB Chain", "Binance", "BSC"] },
+  { key: "bsc", label: "BNB", aliases: ["BNB Chain", "Binance", "BSC", "BNB"] },
   { key: "abstract", label: "Abstract", aliases: ["Abstract"] },
   { key: "avalanche", label: "Avalanche", aliases: ["Avalanche"] },
   { key: "hyperevm", label: "HyperEVM", aliases: ["HyperEVM"] },
@@ -24,7 +24,7 @@ export const LOGO_CHAINS = [
   { key: "monad", label: "Monad", aliases: ["Monad"] },
   { key: "megaeth", label: "MegaETH", aliases: ["MegaETH"] },
   { key: "tempo", label: "Tempo", aliases: ["Tempo"] },
-  { key: "rh", label: "Robinhood Chain", aliases: ["Robinhood Chain", "Robinhood", "罗宾汉链", "罗宾汉"] },
+  { key: "rh", label: "Robinhood", aliases: ["Robinhood Chain", "Robinhood", "罗宾汉链", "罗宾汉"] },
   { key: "arc", label: "Arc", aliases: ["Arc"] },
   { key: "stable", label: "Stable", aliases: ["Stable"] },
   { key: "solana", label: "Solana", aliases: ["Solana"] },

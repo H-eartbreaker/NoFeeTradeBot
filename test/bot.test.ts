@@ -128,7 +128,7 @@ test("买前确认显示链CA名称池税费，确认后只执行一次并刷新
   await f.callback(f.buyButton());
   assert.equal(f.buys.length, 0);
   const preview = f.replies.at(-1)!;
-  for (const text of ["BNB Chain", TOKEN, "Test &lt;Token&gt;", POOL, "PancakeSwap V3", "买入税：1.00%", "卖出税：2.00%", "貔貅"]) assert.ok(preview.includes(text), text);
+  for (const text of ["BNB", TOKEN, "Test &lt;Token&gt;", POOL, "PancakeSwap V3", "买入税：1.00%", "卖出税：2.00%", "貔貅"]) assert.ok(preview.includes(text), text);
   const confirm = f.button("confirm:");
   await f.callback(confirm, 456); assert.equal(f.buys.length, 0);
   await Promise.all([f.callback(confirm), f.callback(confirm)]);

@@ -20,7 +20,7 @@ const amounts = (...s: string[]) => s.map((x) => parseEther(x));
 export const CHAINS: Record<string, ChainConfig> = {
   bsc: {
     key: "bsc",
-    label: "BNB Chain",
+    label: "BNB",
     viemChain: bsc,
     rpcUrls: ["https://bsc-rpc.publicnode.com", "https://bsc-dataseed.bnbchain.org"],
     nativeSymbol: "BNB",
@@ -56,7 +56,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   },
   rh: {
     key: "rh",
-    label: "Robinhood Chain",
+    label: "Robinhood",
     viemChain: robinhood,
     rpcUrls: ["https://rpc.mainnet.chain.robinhood.com"],
     nativeSymbol: "ETH",
