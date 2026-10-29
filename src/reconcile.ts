@@ -4,9 +4,10 @@ import { receiptFee } from "./trade.ts";
 import type { TradeDeps } from "./trade.ts";
 
 export function applyJournalEntry(state: State, e: JournalEntry): void {
-  if (e.status !== "confirmed" || !e.token || !e.hash) return;
-  if (e.kind === "buy" && e.amountIn) state.recordBuy(e.chain, e.token, BigInt(e.amountIn), e.wallet, e.hash);
-  if (e.kind === "sell" && e.sellPct !== undefined) state.recordSell(e.chain, e.token, e.sellPct, e.wallet, e.hash,
+  const id = e.signature ?? e.hash;
+  if (e.status !== "confirmed" || !e.token || !id) return;
+  if (e.kind === "buy" && e.amountIn) state.recordBuy(e.chain, e.token, BigInt(e.amountIn), e.wallet, id);
+  if (e.kind === "sell" && e.sellPct !== undefined) state.recordSell(e.chain, e.token, e.sellPct, e.wallet, id,
     e.balanceBefore && e.amountIn ? { sold: BigInt(e.amountIn), balance: BigInt(e.balanceBefore) } : undefined);
 }
 

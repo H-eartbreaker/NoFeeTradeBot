@@ -19,6 +19,7 @@ export type ChainSettings = {
   quickBuy?: boolean;
   risk?: RiskFilter;
   execution?: ExecutionSettings;
+  autoRule?: Rule;
 };
 export type Blacklist = { tokens: string[]; developers: string[] };
 export type TrackedWallet = { address: string; label: string };
@@ -48,7 +49,8 @@ const toPosition = (wallet: string, chain: string, token: string, p: StoredPosit
   wallet, chain, token, cost: BigInt(p.cost), tp: p.tp, sl: p.sl, tiers: p.tiers ?? legacyTiers(p.tp), trail: p.trail ?? null, done: p.done ?? 0, peak: BigInt(p.peak ?? "0"), paused: p.paused ?? [],
 });
 
-const posKey = (chain: string, token: string, wallet = "main") => `${wallet === "main" ? "" : `${wallet}:`}${chain}:${token.toLowerCase()}`;
+export const chainKey = (chain: string, value: string) => chain === "sol" ? value : value.toLowerCase();
+const posKey = (chain: string, token: string, wallet = "main") => `${wallet === "main" ? "" : `${wallet}:`}${chain}:${chainKey(chain, token)}`;
 
 export class State {
   private data: StateData;
@@ -113,12 +115,12 @@ export class State {
 
   isBlacklisted(kind: "token" | "developer", chain: string, address: string): boolean {
     const list = kind === "token" ? this.data.blacklist.tokens : this.data.blacklist.developers;
-    return list.includes(`${chain}:${address.toLowerCase()}`);
+    return list.includes(`${chain}:${chainKey(chain, address)}`);
   }
 
   setBlacklisted(kind: "token" | "developer", chain: string, address: string, on: boolean): void {
     const list = kind === "token" ? this.data.blacklist.tokens : this.data.blacklist.developers;
-    const key = `${chain}:${address.toLowerCase()}`;
+    const key = `${chain}:${chainKey(chain, address)}`;
     const next = list.filter((x) => x !== key);
     if (on) next.push(key);
     if (kind === "token") this.data.blacklist.tokens = next; else this.data.blacklist.developers = next;
@@ -194,7 +196,7 @@ export class State {
 
   position(chain: string, token: string, wallet = "main"): Position | null {
     const p = this.data.positions[posKey(chain, token, wallet)];
-    return p ? toPosition(wallet, chain, token.toLowerCase(), p) : null;
+    return p ? toPosition(wallet, chain, chainKey(chain, token), p) : null;
   }
 
   positions(): Position[] {
@@ -208,15 +210,16 @@ export class State {
   // 买入后调用：记录代币、累加成本；新仓位套用默认止盈止损，老仓位保留自己的规则
   recordBuy(chain: string, token: string, spent: bigint, wallet = "main", hash?: string): void {
     if (this.applied(chain, wallet, hash)) return;
-    token = token.toLowerCase();
+    token = chainKey(chain, token);
     const tokens = wallet === "main" ? this.data.tokens : (this.data.walletTokens[wallet] ??= {});
     const list = (tokens[chain] ??= []);
     if (!list.includes(token)) list.push(token);
     const key = posKey(chain, token, wallet);
     const old = this.data.positions[key];
+    const rule = this.data.chainSettings[chain]?.autoRule ?? (chain === "sol" ? { tp: null, sl: null } : this.data.defaultRule);
     this.data.positions[key] = old
       ? { ...old, cost: (BigInt(old.cost) + spent).toString() }
-      : { cost: spent.toString(), tp: this.data.defaultRule.tp, sl: this.data.defaultRule.sl, tiers: this.data.defaultRule.tiers ?? legacyTiers(this.data.defaultRule.tp), trail: this.data.defaultRule.trail ?? null, done: 0, paused: [] };
+      : { cost: spent.toString(), tp: rule.tp, sl: rule.sl, tiers: rule.tiers ?? legacyTiers(rule.tp), trail: rule.trail ?? null, done: 0, paused: [] };
     this.markApplied(chain, wallet, hash); this.save();
   }
 
@@ -244,10 +247,10 @@ export class State {
   }
 
   private applied(chain: string, wallet: string, hash?: string): boolean {
-    return !!hash && this.data.appliedTransactions.includes(`${wallet}:${chain}:${hash.toLowerCase()}`);
+    return !!hash && this.data.appliedTransactions.includes(`${wallet}:${chain}:${chainKey(chain, hash)}`);
   }
   private markApplied(chain: string, wallet: string, hash?: string): void {
-    if (hash) this.data.appliedTransactions.push(`${wallet}:${chain}:${hash.toLowerCase()}`);
+    if (hash) this.data.appliedTransactions.push(`${wallet}:${chain}:${chainKey(chain, hash)}`);
   }
 
   removePosition(chain: string, token: string, wallet = "main"): void {

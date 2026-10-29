@@ -7,6 +7,7 @@ export type JournalKind = "buy" | "sell" | "approve" | "transfer" | "swap" | "br
 export type JournalEntry = {
   id: string; at: string; chain: string; wallet: string; kind: JournalKind;
   token?: string; hash?: Hex; status: "preparing" | "pending" | "confirmed" | "failed" | "unknown";
+  signature?: string; owner?: string; lastValidBlockHeight?: string; tipLamports?: string;
   amountIn?: string; amountOut?: string; gasCost?: string; feeComplete?: boolean; recipient?: string;
   destinationChain?: string; requestId?: string; bridgeStatus?: string; decimals?: number; symbol?: string;
   sellPct?: number;
@@ -16,7 +17,7 @@ export type JournalEntry = {
   outputBalanceBefore?: string;
 };
 
-// 只记录公开交易数据；追加更新，不记录私钥、RPC凭据或交易签名。
+// 只记录公开交易数据和交易编号；不记录私钥、RPC 凭据或已签名交易字节。
 export class Journal {
   private records = new Map<string, JournalEntry>();
   private file: string;
@@ -51,7 +52,7 @@ export class Journal {
     return [...this.records.values()].filter((e) => (!wallet || e.wallet === wallet) && (!chain || e.chain === chain)).map((e) => ({ ...e })).reverse();
   }
   pending(wallet: string, chain: string, token?: string): boolean {
-    return this.entries(wallet, chain).some((e) => ["pending", "unknown", "preparing"].includes(e.status) && (!token || e.token?.toLowerCase() === token.toLowerCase()));
+    return this.entries(wallet, chain).some((e) => ["pending", "unknown", "preparing"].includes(e.status) && (!token || (chain === "sol" ? e.token === token : e.token?.toLowerCase() === token.toLowerCase())));
   }
   private persist(entry: JournalEntry) {
     mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });

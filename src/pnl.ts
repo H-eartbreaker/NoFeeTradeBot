@@ -1,5 +1,7 @@
 import type { JournalEntry } from "./journal.ts";
 import { NATIVE } from "./kyber.ts";
+import { SOL_MINT } from "./sol-chain.ts";
+import { chainKey } from "./state.ts";
 
 export type TokenBook = { quantity: bigint | null; cost: bigint | null; spent: bigint | null; returned: bigint | null };
 const empty = (): TokenBook => ({ quantity: 0n, cost: 0n, spent: 0n, returned: 0n });
@@ -11,8 +13,9 @@ export function calculatePnl(entries: readonly JournalEntry[]) {
   const seen = new Set<string>();
   let realized = 0n; let realizedTrades = 0; let unknownSales = 0; let estimated = false; let gas = 0n; let feeComplete = true; let unresolved = 0;
   for (const e of [...entries].reverse()) {
-    if (["confirmed", "failed"].includes(e.status) && e.hash) {
-      const key = `${e.wallet}:${e.chain}:${e.hash.toLowerCase()}`;
+    const id = e.signature ?? e.hash;
+    if (["confirmed", "failed"].includes(e.status) && id) {
+      const key = `${e.wallet}:${e.chain}:${chainKey(e.chain, id)}`;
       if (seen.has(key)) continue;
       seen.add(key);
     }
@@ -22,10 +25,12 @@ export function calculatePnl(entries: readonly JournalEntry[]) {
       if (fee === null || e.feeComplete !== true) feeComplete = false;
     }
     if (e.status !== "confirmed") continue;
-    const isBuy = e.kind === "buy" || (e.kind === "swap" && e.token?.toLowerCase() === NATIVE);
-    const isSell = e.kind === "sell" || (e.kind === "swap" && e.outputToken?.toLowerCase() === NATIVE);
-    const token = (isBuy && e.kind === "swap" ? e.outputToken : e.token)?.toLowerCase();
-    if (!token || token === NATIVE || (!isBuy && !isSell && e.kind !== "transfer")) continue;
+    const native = e.chain === "sol" ? SOL_MINT : NATIVE;
+    const isBuy = e.kind === "buy" || (e.kind === "swap" && e.token && chainKey(e.chain, e.token) === native);
+    const isSell = e.kind === "sell" || (e.kind === "swap" && e.outputToken && chainKey(e.chain, e.outputToken) === native);
+    const rawToken = isBuy && e.kind === "swap" ? e.outputToken : e.token;
+    const token = rawToken ? chainKey(e.chain, rawToken) : undefined;
+    if (!token || token === native || (!isBuy && !isSell && e.kind !== "transfer")) continue;
     const before = number(isBuy && e.kind === "swap" ? e.outputBalanceBefore : e.balanceBefore);
     let book = books.get(token);
     if (before === 0n) book = empty();
