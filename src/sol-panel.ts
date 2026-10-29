@@ -11,6 +11,7 @@ import { holdings, isSolanaAddress, mintInfo, openRpc, solBalance, SOL_DECIMALS,
 import type { MintInfo, SolRpc, TokenMeta, Quote } from "./sol-chain.ts";
 import { buySol, serial, SolPendingError, sellToken, SolTradeError } from "./sol-trade.ts";
 import type { State } from "./state.ts";
+import type { Journal } from "./journal.ts";
 import { errMsg, escapeHtml, fmtUnits, parseSlippageInput } from "./util.ts";
 
 const HTML = { parse_mode: "HTML", link_preview_options: { is_disabled: true } } as const;
@@ -32,6 +33,7 @@ type Input =
 type Options = {
   state: State; rpcUrl: string; chains: ChainConfig[]; logos: Logos;
   mainKeyboard: () => InlineKeyboard; navigate: (ctx: Context) => Promise<void>;
+  journal?: Journal;
 };
 const defaultServices = {
   holdings, mintInfo, solBalance, tokenMeta, quote, buySol, sellToken,
@@ -128,7 +130,7 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
       .text(`图表入口：${display.showChart ? "显示" : "隐藏"}`, `display:sol:chart:${display.showChart ? 0 : 1}`)
       .text(`浏览器入口：${display.showExplorer ? "显示" : "隐藏"}`, `display:sol:explorer:${display.showExplorer ? 0 : 1}`).row()
       .text(`时区 ${display.timeZone}`, "set:sol:zone").text(`${display.hour12 ? 12 : 24} 小时制`, `display:sol:hour12:${display.hour12 ? 0 : 1}`).row()
-      .text("链 Logo", "logos:settings").text("恢复本链默认", "set:sol:reset").row().text("返回首页", "nav:start");
+      .text("发送与费用", "exec:sol").row().text("链 Logo", "logos:settings").text("恢复本链默认", "set:sol:reset").row().text("返回首页", "nav:start");
     await reply(ctx, ["<b>交易设置</b>", `正在设置：${o.logos.chain(SOLANA)}`,
       `买入按钮：${s.buyAmounts.map((a) => formatUnits(a, 9)).join(" / ")} SOL`,
       `卖出按钮：${s.sellPercentages.join("% / ")}%`, "", "交易参数按链保存；显示和时间设置对所有链生效。",
@@ -263,11 +265,12 @@ export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaSe
         const ensureCurrent = () => { if (!valid()) throw new SolTradeError("确认已过期或链、设置已变化，请重新操作"); };
         ensureCurrent();
         return p.kind === "buy"
-          ? buySol(rpc, signer, p.mint, p.lamports, p.slippageBps, p.quote, ensureCurrent)
-          : sellToken(rpc, signer, p.mint, p.pct, p.slippageBps, p.quote, ensureCurrent);
+          ? buySol(rpc, signer, p.mint, p.lamports, p.slippageBps, p.quote, ensureCurrent, o.journal ? { journal: o.journal, policy: () => o.state.chainSettings("sol").execution ?? {} } : undefined)
+          : sellToken(rpc, signer, p.mint, p.pct, p.slippageBps, p.quote, ensureCurrent, o.journal ? { journal: o.journal, policy: () => o.state.chainSettings("sol").execution ?? {} } : undefined);
       });
-      const out = BigInt(result.quote.outAmount);
-      const got = p.kind === "buy" ? `预计得到 ${fmtUnits(out, p.decimals, 6)} ${escapeHtml(p.symbol)}` : `预计得到 ${fmtUnits(out, SOL_DECIMALS, 6)} SOL`;
+      const out = BigInt(result.entry?.amountOut ?? result.quote.outAmount);
+      const label = result.entry?.amountOut !== undefined ? "实际得到" : "报价预计（实际到账待核对）";
+      const got = p.kind === "buy" ? `${label} ${fmtUnits(out, p.decimals, 6)} ${escapeHtml(p.symbol)}` : `${label} ${fmtUnits(out, SOL_DECIMALS, 6)} SOL`;
       await reply(ctx, `✅ ${p.kind === "buy" ? "买入" : "卖出"}成功（Solana）\n${got}\n交易：<a href="${solscan(result.signature)}">查看 Solscan</a>`, homeKb());
     } catch (e) {
       if (e instanceof SolPendingError) {

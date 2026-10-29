@@ -8,6 +8,9 @@ import {
 import type { KeyPairSigner, Signature } from "@solana/kit";
 import { holdings, quote, SOL_MINT, solBalance, swapTransaction } from "./sol-chain.ts";
 import type { Quote, SolRpc } from "./sol-chain.ts";
+import { jupiterInstructions, sendSolInstructions } from "./sol-execution.ts";
+import type { SolTransactionContext } from "./sol-execution.ts";
+import type { JournalEntry } from "./journal.ts";
 
 export const RESERVE_LAMPORTS = 10_000_000n;
 const FEE_FLOOR_LAMPORTS = 5_000_000n;
@@ -24,7 +27,7 @@ export class SolPendingError extends Error {
   }
 }
 
-export type TradeResult = { signature: string; quote: Quote };
+export type TradeResult = { signature: string; quote: Quote; entry?: JournalEntry };
 
 const tails = new Map<string, Promise<void>>();
 
@@ -81,16 +84,22 @@ export async function awaitLanding(rpc: SolRpc, signature: Signature, lastValidB
   throw new SolPendingError(signature);
 }
 
-export async function buySol(rpc: SolRpc, signer: KeyPairSigner, mint: string, lamports: bigint, slippageBps: number, approvedQuote?: Quote, ensureCurrent = () => {}): Promise<TradeResult> {
+export async function buySol(rpc: SolRpc, signer: KeyPairSigner, mint: string, lamports: bigint, slippageBps: number, approvedQuote?: Quote, ensureCurrent = () => {}, ctx?: SolTransactionContext): Promise<TradeResult> {
   const balance = await solBalance(rpc, signer.address);
   if (balance < lamports + RESERVE_LAMPORTS) throw new SolTradeError("SOL 余额不足（需要留 0.01 SOL 作为手续费和账户租金）");
   const swapQuote = approvedQuote ?? await quote(SOL_MINT, mint, lamports, slippageBps);
   if (BigInt(swapQuote.inAmount) !== lamports) throw new SolTradeError("报价金额已变化，请重新确认");
+  if (ctx) {
+    if (swapQuote.inputMint !== SOL_MINT || swapQuote.outputMint !== mint) throw new SolTradeError("报价币种不符");
+    const built = await jupiterInstructions(swapQuote, signer.address);
+    const result = await sendSolInstructions(rpc, signer, built.instructions, built.tables, ctx, { kind: "buy", token: mint, quotedAmountOut: swapQuote.outAmount, minimumOut: swapQuote.otherAmountThreshold }, ensureCurrent);
+    return { ...result, quote: swapQuote };
+  }
   const signature = await execute(rpc, signer, swapQuote, ensureCurrent);
   return { signature, quote: swapQuote };
 }
 
-export async function sellToken(rpc: SolRpc, signer: KeyPairSigner, mint: string, pct: number, slippageBps: number, approvedQuote?: Quote, ensureCurrent = () => {}): Promise<TradeResult> {
+export async function sellToken(rpc: SolRpc, signer: KeyPairSigner, mint: string, pct: number, slippageBps: number, approvedQuote?: Quote, ensureCurrent = () => {}, ctx?: SolTransactionContext): Promise<TradeResult> {
   if (!Number.isFinite(pct) || pct < 0.01 || pct > 100 || Math.abs(pct * 100 - Math.round(pct * 100)) > 1e-8) throw new SolTradeError("卖出比例无效");
   const balance = await solBalance(rpc, signer.address);
   if (balance < FEE_FLOOR_LAMPORTS) throw new SolTradeError("SOL 余额不足以支付交易费用");
@@ -100,6 +109,12 @@ export async function sellToken(rpc: SolRpc, signer: KeyPairSigner, mint: string
   if (amount <= 0n) throw new SolTradeError("卖出数量为 0");
   const swapQuote = approvedQuote ?? await quote(mint, SOL_MINT, amount, slippageBps);
   if (BigInt(swapQuote.inAmount) !== amount) throw new SolTradeError("持仓数量已变化，请重新确认卖出");
+  if (ctx) {
+    if (swapQuote.inputMint !== mint || swapQuote.outputMint !== SOL_MINT) throw new SolTradeError("报价币种不符");
+    const built = await jupiterInstructions(swapQuote, signer.address);
+    const result = await sendSolInstructions(rpc, signer, built.instructions, built.tables, ctx, { kind: "sell", token: mint, sellPct: pct, balanceBefore: held.amount.toString(), quotedAmountOut: swapQuote.outAmount, minimumOut: swapQuote.otherAmountThreshold }, ensureCurrent);
+    return { ...result, quote: swapQuote };
+  }
   const signature = await execute(rpc, signer, swapQuote, ensureCurrent);
   return { signature, quote: swapQuote };
 }

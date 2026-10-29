@@ -113,7 +113,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   const displayChains = [...cfg.chains, SOLANA];
   const logos = registerLogos(bot, state, displayChains);
   clearExecution = registerExecutionPanel(bot, { state, chains: cfg.chains, logos, changed: invalidate });
-  const solana = registerSolana(bot, { state, rpcUrl: cfg.solanaRpcUrl, chains: cfg.chains, logos, mainKeyboard: () => mainKeyboard(), navigate: home }, solanaOverrides);
+  const solana = registerSolana(bot, { state, rpcUrl: cfg.solanaRpcUrl, chains: cfg.chains, logos, mainKeyboard: () => mainKeyboard(), navigate: home, journal: deps.values().next().value?.journal }, solanaOverrides);
   clearApprovals = registerApprovals(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps }, { readToken: services.readToken, getRoute: services.getRoute });
   clearPositions = registerPositions(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps,
     slippage: (key) => settings(key).sellSlippageBps, refresh: refreshCard }, { readToken: services.readToken, getRoute: services.getRoute, sell: services.sell });

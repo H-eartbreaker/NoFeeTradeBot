@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2",
+    "@solana-program/address-lookup-table": "0.16.0",
+    "@solana-program/system": "0.16.0",
+    "@solana-program/token": "0.18.0",
     "@solana/kit": "^8.6.0",
     "grammy": "^1.46.0",
     "undici": "^8.12.3",

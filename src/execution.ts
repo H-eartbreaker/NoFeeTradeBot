@@ -2,7 +2,7 @@ import { createWalletClient, http, parseEther, parseGwei } from "viem";
 import type { Hex } from "viem";
 import type { TradeDeps, PreparedGas } from "./trade.ts";
 
-export type ExecutionSettings = { mev?: boolean; gasPriceGwei?: string | null; maxTxFee?: string | null };
+export type ExecutionSettings = { mev?: boolean; gasPriceGwei?: string | null; maxTxFee?: string | null; jitoTipLamports?: string };
 export const PRIVATE_EVM: Record<string, { label: string; url: string; chainId: number }> = {
   eth: { label: "Flashbots Protect", url: "https://rpc.flashbots.net?hint=hash", chainId: 1 },
   bsc: { label: "48 Club", url: "https://rpc.48.club", chainId: 56 },
