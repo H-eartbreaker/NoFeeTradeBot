@@ -14,7 +14,7 @@ import { readToken } from "./token.ts";
 import type { TokenInfo } from "./token.ts";
 import { buy, sell } from "./trade.ts";
 import type { TradeDeps } from "./trade.ts";
-import { errMsg, escapeHtml, extractAddress, fmtUnits, pctToBps } from "./util.ts";
+import { errMsg, escapeHtml, extractAddress, fmtUnits, parseSlippageInput } from "./util.ts";
 
 const HTML = { parse_mode: "HTML", link_preview_options: { is_disabled: true } } as const;
 const ADDR = "(0x[0-9a-f]{40})";
@@ -34,6 +34,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   const bot = new Bot(cfg.botToken, { client: { fetch: nativeFetch } });
   const slippage = () => state.slippageBps ?? cfg.defaultSlippageBps;
   const activeKey = () => (state.activeChain && deps.has(state.activeChain) ? state.activeChain : cfg.chains[0].key);
+  let awaitingSlippage = false;
 
   // 只服务白名单用户的私聊；其他人一律静默
   bot.use(async (ctx, next) => {
@@ -41,6 +42,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       console.log(`已忽略非白名单消息: 用户ID ${ctx.from?.id}（.env 里的 ALLOWED_USER_ID 是 ${cfg.allowedUserId}）`);
       return;
     }
+    if (ctx.callbackQuery || ctx.message?.text?.startsWith("/")) awaitingSlippage = false;
     await next();
   });
 
@@ -165,7 +167,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
         "• 直接发送代币合约地址 → 查看信息并买卖",
         "• /chain → 切换链",
         "• /balance → 各链余额和持仓",
-        "• /slippage 10 → 设置滑点百分比（最大 20）",
+        "• /slippage → 设置滑点，直接回复数字即可",
         "• /tpsl 100 30 → 新买入自动设置 +100% 止盈、-30% 止损（/tpsl off 关闭）",
         `   当前: ${ruleText(state.defaultRule)}`,
       ].join("\n"),
@@ -214,14 +216,20 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     });
   });
 
-  bot.command("slippage", async (ctx) => {
-    const bps = pctToBps(Number(ctx.match.trim()));
+  async function setSlippageFromText(ctx: Context, text: string): Promise<void> {
+    const bps = parseSlippageInput(text);
     if (bps === null) {
-      await ctx.reply(`用法: /slippage 10（0 到 20 之间）。当前 ${slippage() / 100}%`);
+      awaitingSlippage = true;
+      await ctx.reply(`当前滑点 ${slippage() / 100}%。\n直接发送要设置的百分比，例如 30 或 30%。\n支持 0.01～99.99，最多两位小数；发送“取消”退出。`);
       return;
     }
+    awaitingSlippage = false;
     state.setSlippage(bps);
     await ctx.reply(`滑点已设为 ${bps / 100}%`);
+  }
+
+  bot.command("slippage", async (ctx) => {
+    await setSlippageFromText(ctx, ctx.match.trim());
   });
 
   bot.command("tpsl", async (ctx) => {
@@ -250,7 +258,17 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
 
   bot.on("message:text", async (ctx) => {
     const token = extractAddress(ctx.message.text);
-    if (!token) return;
+    if (!token) {
+      if (!awaitingSlippage) return;
+      if (/^(取消|cancel)$/i.test(ctx.message.text.trim())) {
+        awaitingSlippage = false;
+        await ctx.reply("已取消，滑点保持不变");
+      } else {
+        await setSlippageFromText(ctx, ctx.message.text);
+      }
+      return;
+    }
+    awaitingSlippage = false;
     await showCard(ctx, deps.get(activeKey())!, token, false);
   });
 

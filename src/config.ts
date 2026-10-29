@@ -52,7 +52,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const chains = keys.map((k, i) => resolveChain(env, k, i === 0));
 
   const defaultSlippageBps = pctToBps(Number(env.DEFAULT_SLIPPAGE_PCT?.trim() || "10"));
-  if (defaultSlippageBps === null) throw new Error("DEFAULT_SLIPPAGE_PCT 必须在 0 到 20 之间");
+  if (defaultSlippageBps === null) throw new Error("DEFAULT_SLIPPAGE_PCT 必须在 0.01 到 99.99 之间");
 
   return { botToken, allowedUserId, privateKey: privateKey as Hex, chains, defaultSlippageBps };
 }

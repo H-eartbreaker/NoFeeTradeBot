@@ -24,9 +24,15 @@ export function shortAddr(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
-export function pctToBps(pct: number, maxPct = 20): number | null {
-  if (!Number.isFinite(pct) || pct <= 0 || pct > maxPct) return null;
+export function pctToBps(pct: number): number | null {
+  if (!Number.isFinite(pct) || pct < 0.01 || pct > 99.99) return null;
   return Math.round(pct * 100);
+}
+
+export function parseSlippageInput(text: string): number | null {
+  const value = text.trim();
+  if (!/^(?:\d+(?:\.\d{1,2})?|\.\d{1,2})\s*[%％]?$/.test(value)) return null;
+  return pctToBps(Number(value.replace(/[%％]$/, "").trim()));
 }
 
 export function errMsg(e: unknown): string {
