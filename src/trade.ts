@@ -3,7 +3,7 @@ import type { Address, Hex } from "viem";
 import type { ChainConfig } from "./chains.ts";
 import { NATIVE, buildSwap, getRoute, routeIdentity } from "./kyber.ts";
 import type { Clients } from "./wallet.ts";
-import type { Journal, JournalKind } from "./journal.ts";
+import type { Journal, JournalEntry } from "./journal.ts";
 
 export type TradeDeps = { clients: Clients; chain: ChainConfig; walletId?: string; journal?: Journal };
 export type BuyResult = { hash: Hex; received: bigint; blockNumber: bigint };
@@ -33,6 +33,13 @@ export class ConfirmedTransactionError extends Error {
 export function receiptFee(receipt: { gasUsed: bigint; effectiveGasPrice: bigint; l1Fee?: bigint | string }): { gasCost: bigint; feeComplete: boolean } {
   return { gasCost: receipt.gasUsed * receipt.effectiveGasPrice + BigInt(receipt.l1Fee ?? 0), feeComplete: receipt.l1Fee !== undefined };
 }
+export type PreparedGas = { gas?: bigint; maxFeePerGas?: bigint; gasPrice?: bigint };
+export const bufferedGas = (gas: bigint) => (gas * 12n + 9n) / 10n;
+export function executionFee(request: PreparedGas): bigint {
+  const price = request.maxFeePerGas ?? request.gasPrice;
+  if (!request.gas || !price || price <= 0n) throw new Error("无法核对 Gas 费用，未提交交易");
+  return bufferedGas(request.gas) * price;
+}
 
 function slug(chain: ChainConfig): string {
   if (!chain.kyberSlug) throw new Error(`${chain.label} 暂不支持聚合器报价`);
@@ -42,8 +49,8 @@ function slug(chain: ChainConfig): string {
 export async function sendAndWait(
   d: TradeDeps,
   tx: { to: Address; data: Hex; value: bigint },
-  validate?: (request: { gas?: bigint; maxFeePerGas?: bigint; gasPrice?: bigint }) => void,
-  details?: { kind: JournalKind; token?: string; amountIn?: string; recipient?: string; destinationChain?: string; requestId?: string; sellPct?: number },
+  validate?: (request: PreparedGas) => void,
+  details?: Omit<JournalEntry, "id" | "at" | "status" | "chain" | "wallet" | "hash">,
 ) {
   const { clients, journal } = d;
   const { account, publicClient, walletClient } = clients;
@@ -55,7 +62,7 @@ export async function sendAndWait(
   let hash: Hex | undefined;
   let reverted = false;
   try {
-    hash = await walletClient.sendTransaction({ ...req, gas: ((req.gas ?? 0n) * 12n) / 10n } as never);
+    hash = await walletClient.sendTransaction({ ...req, gas: bufferedGas(req.gas ?? 0n) } as never);
     if (journalId) journal!.update(journalId, { hash, status: "pending" });
     const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 90_000 });
     reverted = receipt.status !== "success";
@@ -83,8 +90,8 @@ export function balanceOf(d: TradeDeps, token: Address, blockNumber?: bigint): P
 }
 
 // 授权无限额度给聚合器路由合约（只影响该代币）；已有足够额度则不发交易
-export async function ensureAllowance(d: TradeDeps, token: Address, spender: Address, needed: bigint): Promise<Hex | null> {
-  const { account, publicClient, walletClient } = d.clients;
+export async function ensureAllowance(d: TradeDeps, token: Address, spender: Address, needed: bigint, options?: { exact?: boolean; validate?: (request: PreparedGas) => void }): Promise<Hex | null> {
+  const { account, publicClient } = d.clients;
   const allowance = await publicClient.readContract({
     address: token,
     abi: erc20Abi,
@@ -93,7 +100,10 @@ export async function ensureAllowance(d: TradeDeps, token: Address, spender: Add
   });
   if (allowance >= needed) return null;
   const { encodeFunctionData } = await import("viem");
-  const { hash } = await sendAndWait(d, { to: token, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, maxUint256] }), value: 0n }, undefined, { kind: "approve", token, recipient: spender });
+  if (options?.exact && allowance > 0n) {
+    await sendAndWait(d, { to: token, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, 0n] }), value: 0n }, options.validate, { kind: "approve", token, recipient: spender, amountIn: "0" });
+  }
+  const { hash } = await sendAndWait(d, { to: token, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, options?.exact ? needed : maxUint256] }), value: 0n }, options?.validate, { kind: "approve", token, recipient: spender, amountIn: (options?.exact ? needed : maxUint256).toString() });
   return hash;
 }
 

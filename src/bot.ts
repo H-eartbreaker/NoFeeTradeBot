@@ -7,6 +7,7 @@ import type { Wallets } from "./wallets.ts";
 import { registerLogos } from "./logos.ts";
 import { registerWalletPanel } from "./wallet-panel.ts";
 import { installButtonIcons } from "./button-icons.ts";
+import { registerFundsPanel } from "./funds-panel.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
 import type { RiskReport } from "./honeypot.ts";
@@ -69,18 +70,22 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   const settings = (key: string) => tradingSettings(state, deps.get(key)!.chain, cfg.defaultSlippageBps);
   let input: Input | null = null;
   const pendingBuys = new Map<string, PendingBuy>();
+  let clearFunds: (() => void) | undefined;
 
   // 所有菜单、输入和交易回调都经过同一白名单校验。
   bot.use(async (ctx, next) => {
     if (ctx.from?.id !== cfg.allowedUserId || ctx.chat?.type !== "private") return;
     if (ctx.callbackQuery || ctx.message?.text?.startsWith("/")) input = null;
+    if ((ctx.callbackQuery && !ctx.callbackQuery.data?.startsWith("funds:")) || ctx.message?.text?.startsWith("/")) clearFunds?.();
     await next();
   });
   const logos = registerLogos(bot, state, cfg.chains);
+  clearFunds = registerFundsPanel(bot, { chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps, slippage: (key) => settings(key).buySlippageBps });
   registerWalletPanel(bot, { state, chains: cfg.chains, logos, directory: wallets, list: walletList, activeWallet, activeChain: activeKey,
     deps: getDeps, readToken: services.readToken, onSwitch: () => { input = null; pendingBuys.clear(); } });
   const mainKeyboard = () => new InlineKeyboard().text("买入 / 查看代币", "nav:buy").text("持仓与余额", "nav:balance").row()
     .text("钱包管理", "wallet:page:0").text("交易记录", `history:${activeWallet()}:${activeKey()}:0`).row()
+    .text("转账 / 兑换 / 跨链", "funds:menu").row()
     .text("切换交易链", "nav:chain").text("设置", "nav:settings").row().text("止盈止损", "nav:tpsl").text("使用说明", "nav:help");
   const backKeyboard = () => new InlineKeyboard().text("返回首页", "nav:start");
   function invalidate(chain: string) {

@@ -7,6 +7,7 @@ export const commands = [
   { command: "wallets", description: "管理和选择默认钱包" },
   { command: "deposit", description: "查看充值地址和网络" },
   { command: "history", description: "查看交易记录、状态和 Gas" },
+  { command: "funds", description: "转账、稳定币兑换和跨链" },
   { command: "settings", description: "交易参数、买前确认和显示设置" },
   { command: "logos", description: "链 Logo 显示和导入" },
   { command: "slippage", description: "设置滑点，点击后直接发送百分比" },

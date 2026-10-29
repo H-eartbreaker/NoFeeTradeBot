@@ -224,3 +224,11 @@ test("快速买入默认关闭，开启需确认且不能绕过买前确认", as
   await f.callback("set:bsc:quick:0"); await f.send(TOKEN); assert.equal(f.buys.length, 2);
   await f.callback("c:base"); await f.send(TOKEN); assert.equal(f.buys.length, 2);
 });
+
+test("进入 Logo 等提前处理的菜单也会退出资金输入，旧收款步骤不继续", async (t) => {
+  const f = fixture(t);
+  await f.callback("funds:transfer:bsc:main:native");
+  await f.callback("logos:settings"); const count = f.replies.length;
+  await f.send("0.001"); assert.equal(f.replies.length, count);
+  assert.equal(f.buys.length, 0); assert.equal(f.sells.length, 0);
+});

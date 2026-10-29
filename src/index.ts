@@ -8,6 +8,7 @@ import { tradingSettings } from "./settings.ts";
 import { Wallets } from "./wallets.ts";
 import { Journal } from "./journal.ts";
 import { applyJournalEntry, reconcile } from "./reconcile.ts";
+import { startBridgeMonitor } from "./bridge.ts";
 
 const cfg = loadConfig();
 enableKeepAlive([
@@ -32,6 +33,7 @@ await bot.start({
   onStart: (me) => {
     clearTimeout(timer);
     console.log(`机器人 @${me.username} 已启动`);
+    startBridgeMonitor(journal, (text) => bot.api.sendMessage(cfg.allowedUserId, text));
     void configureCommandMenu(bot.api, cfg.allowedUserId)
       .then(() => console.log("命令菜单已更新"))
       .catch(() => console.error("命令菜单更新失败，下次启动时会重试"));

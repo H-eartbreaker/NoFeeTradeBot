@@ -4,6 +4,7 @@ import type { Bot, Context } from "grammy";
 import type { Address } from "viem";
 import type { ChainConfig } from "./chains.ts";
 import type { JournalEntry } from "./journal.ts";
+import { bridgeStatusLabel } from "./bridge.ts";
 import type { Logos } from "./logos.ts";
 import type { State } from "./state.ts";
 import { readToken } from "./token.ts";
@@ -79,13 +80,21 @@ export function registerWalletPanel(bot: Bot, o: Options): void {
     if (fees.length < all.length) lines.push(`其中 ${all.length - fees.length} 笔尚无费用记录。`);
     for (const e of entries) {
       const time = new Intl.DateTimeFormat("zh-CN", { timeZone: o.state.display.timeZone, hour12: o.state.display.hour12, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(e.at));
-      lines.push("", `<b>${kindNames[e.kind]} · ${statusNames[e.status]}</b> · ${time}`);
+      lines.push("", `<b>${kindNames[e.kind]} · ${e.kind === "bridge" && e.status === "confirmed" ? "来源链成功" : statusNames[e.status]}</b> · ${time}`);
       const m = e.token ? metadata.get(e.token) : null;
       const tokenAmount = (raw: string) => m ? `${fmtUnits(BigInt(raw), m.decimals, 8)} ${escapeHtml(m.symbol.slice(0, 30))}` : "数量精度暂不可查";
       if (e.kind === "buy" && e.amountIn) lines.push(`支出：${fmtUnits(BigInt(e.amountIn), 18, 8)} ${d.chain.nativeSymbol}`);
       if (e.kind === "sell" && e.amountIn) lines.push(`卖出：${tokenAmount(e.amountIn)}`);
       if (e.amountOut && e.kind === "buy") lines.push(`实际到账：${tokenAmount(e.amountOut)}`);
       if (e.amountOut && e.kind === "sell") lines.push(`实际换回：${fmtUnits(BigInt(e.amountOut), 18, 8)} ${d.chain.nativeSymbol}（未扣 Gas）`);
+      if (["transfer", "swap", "bridge"].includes(e.kind) && e.amountIn && e.decimals !== undefined) lines.push(`支出：${fmtUnits(BigInt(e.amountIn), e.decimals, 8)} ${escapeHtml(e.symbol ?? "")}`);
+      if (e.kind === "swap" && e.amountOut && e.outputDecimals !== undefined) lines.push(`到账${e.amountOutEstimated ? "估算" : ""}：${fmtUnits(BigInt(e.amountOut), e.outputDecimals, 8)} ${escapeHtml(e.outputSymbol ?? "")}`);
+      if (e.kind === "bridge") {
+        const destination = o.chains.find((c) => c.key === e.destinationChain);
+        lines.push(`目标链：${escapeHtml(destination?.label ?? e.destinationChain ?? "未知")}`, `跨链状态：${bridgeStatusLabel(e.bridgeStatus)}`);
+        if (e.quotedAmountOut && destination) lines.push(`报价预计到账：${fmtUnits(BigInt(e.quotedAmountOut), 18, 8)} ${destination.nativeSymbol}（非实收记录）`);
+        if (e.requestId) lines.push(`请求编号：<code>${escapeHtml(e.requestId)}</code>`);
+      }
       if (e.token) lines.push(`CA：<code>${escapeHtml(e.token)}</code>`);
       if (e.recipient) lines.push(`${e.kind === "approve" ? "授权对象" : "收款地址"}：<code>${escapeHtml(e.recipient)}</code>`);
       if (e.gasCost !== undefined) lines.push(`Gas：${fmtUnits(BigInt(e.gasCost), 18, 10)} ${d.chain.nativeSymbol}${e.feeComplete !== true ? "（费用可能不完整）" : ""}`);

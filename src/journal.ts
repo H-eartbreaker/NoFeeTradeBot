@@ -10,6 +10,8 @@ export type JournalEntry = {
   amountIn?: string; amountOut?: string; gasCost?: string; feeComplete?: boolean; recipient?: string;
   destinationChain?: string; requestId?: string; bridgeStatus?: string; decimals?: number; symbol?: string;
   sellPct?: number;
+  outputToken?: string; outputSymbol?: string; outputDecimals?: number;
+  quotedAmountOut?: string; minimumOut?: string; amountOutEstimated?: boolean;
 };
 
 // 只记录公开交易数据；追加更新，不记录私钥、RPC凭据或交易签名。
