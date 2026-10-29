@@ -16,6 +16,15 @@ export function buttonIcon(text: string, data?: string): string | null {
   if (data === "wallet:import") return "📂";
   if (/^wallet:(select|new):/.test(data)) return "✅";
   if (/^history:/.test(data)) return "📜";
+  if (/^positions:/.test(data)) return "📊";
+  if (/^exit:p:/.test(data)) return "💵";
+  if (/^exit:a:/.test(data)) return "💸";
+  if (/^exit:confirm:/.test(data)) return "✅";
+  if (data === "exit:cancel") return "✖️";
+  if (/^auth:confirm:/.test(data)) return "✅";
+  if (data === "auth:cancel") return "✖️";
+  if (/^auth:prepare:/.test(data)) return "🔓";
+  if (/^auth:/.test(data)) return "🛡️";
   if (/^(b:|funds:transfer)/.test(data)) return data.startsWith("b:") ? "🛒" : "📤";
   if (/^s:/.test(data)) return "💸";
   if (/^custom:/.test(data)) return "✏️";

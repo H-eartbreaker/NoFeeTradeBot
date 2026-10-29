@@ -4,6 +4,8 @@ export const commands = [
   { command: "start", description: "打开交易终端" },
   { command: "chain", description: "选择交易链：BSC / Base / ETH / 罗宾汉" },
   { command: "balance", description: "查看各链余额和持仓" },
+  { command: "positions", description: "持仓盈亏、卖回本金与按金额卖出" },
+  { command: "approvals", description: "查询和撤销已知代币授权" },
   { command: "wallets", description: "管理和选择默认钱包" },
   { command: "deposit", description: "查看充值地址和网络" },
   { command: "history", description: "查看交易记录、状态和 Gas" },

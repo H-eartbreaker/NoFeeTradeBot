@@ -41,7 +41,7 @@ export function transfer(d: TradeDeps, asset: Asset, recipient: Address, amount:
     const [balance, native] = await Promise.all([assetBalance(d, asset), d.clients.publicClient.getBalance({ address: d.clients.account.address })]);
     if (balance < amount || native < (asset.address === NATIVE ? amount : 0n) + maxGasCost) throw new Error("余额不足，需保留 gas");
     await verifyAsset(d, asset);
-    return sendAndWait(d, transferData(asset, recipient, amount), feeBudget(expires, maxGasCost), { kind: "transfer", token: asset.address, amountIn: amount.toString(), recipient, symbol: asset.symbol, decimals: asset.decimals });
+    return sendAndWait(d, transferData(asset, recipient, amount), feeBudget(expires, maxGasCost), { kind: "transfer", token: asset.address, amountIn: amount.toString(), recipient, symbol: asset.symbol, decimals: asset.decimals, balanceBefore: balance.toString() });
   }, queueKey(d));
 }
 export function swapCurrency(d: TradeDeps, input: Asset, output: Asset, amount: bigint, slip: number, route: Route, expires: number, maxGasCost: bigint) {
@@ -50,7 +50,8 @@ export function swapCurrency(d: TradeDeps, input: Asset, output: Asset, amount: 
     if (Date.now() >= expires) throw new Error("兑换确认已过期");
     const validate = feeBudget(expires, maxGasCost);
     await Promise.all([verifyAsset(d, input), verifyAsset(d, output)]);
-    if (await assetBalance(d, input) < amount) throw new Error("兑换余额不足");
+    const inputBefore = await assetBalance(d, input);
+    if (inputBefore < amount) throw new Error("兑换余额不足");
     if (await d.clients.publicClient.getBalance({ address: d.clients.account.address }) < (input.address === NATIVE ? amount : 0n) + maxGasCost) throw new Error("原生币余额不足，需保留 Gas 预算");
     const minimum = BigInt(route.routeSummary.amountOut) * BigInt(10000 - slip) / 10000n;
     let fresh = await getRoute(d.chain.kyberSlug!, input.address, output.address, amount);
@@ -65,7 +66,8 @@ export function swapCurrency(d: TradeDeps, input: Asset, output: Asset, amount: 
     if (built.transactionValue !== (input.address === NATIVE ? amount : 0n) || built.routerAddress.toLowerCase() !== fresh.routerAddress.toLowerCase() || built.amountOut < minimum) throw new Error("兑换构建的金额、路由或输出不一致");
     const before = await assetBalance(d, output);
     const result = await sendAndWait(d, { to: built.routerAddress, data: built.data, value: built.transactionValue }, validate,
-      { kind: "swap", token: input.address, amountIn: amount.toString(), decimals: input.decimals, symbol: input.symbol, outputToken: output.address, outputDecimals: output.decimals, outputSymbol: output.symbol });
+      { kind: "swap", token: input.address, amountIn: amount.toString(), decimals: input.decimals, symbol: input.symbol, outputToken: output.address, outputDecimals: output.decimals, outputSymbol: output.symbol,
+        balanceBefore: inputBefore.toString(), outputBalanceBefore: before.toString() });
     try {
       const after = await assetBalance(d, output, result.receipt.blockNumber);
       const received = after - before + (output.address === NATIVE ? receiptFee(result.receipt).gasCost : 0n);

@@ -8,6 +8,9 @@ import { registerLogos } from "./logos.ts";
 import { registerWalletPanel } from "./wallet-panel.ts";
 import { installButtonIcons } from "./button-icons.ts";
 import { registerFundsPanel } from "./funds-panel.ts";
+import { registerPositions } from "./positions-panel.ts";
+import { calculatePnl, floatingPnl } from "./pnl.ts";
+import { registerApprovals } from "./approvals-panel.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
 import type { RiskReport } from "./honeypot.ts";
@@ -71,20 +74,28 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   let input: Input | null = null;
   const pendingBuys = new Map<string, PendingBuy>();
   let clearFunds: (() => void) | undefined;
+  let clearPositions: (() => void) | undefined;
+  let clearApprovals: (() => void) | undefined;
 
   // 所有菜单、输入和交易回调都经过同一白名单校验。
   bot.use(async (ctx, next) => {
     if (ctx.from?.id !== cfg.allowedUserId || ctx.chat?.type !== "private") return;
     if (ctx.callbackQuery || ctx.message?.text?.startsWith("/")) input = null;
     if ((ctx.callbackQuery && !ctx.callbackQuery.data?.startsWith("funds:")) || ctx.message?.text?.startsWith("/")) clearFunds?.();
+    if ((ctx.callbackQuery && !/^(exit|positions):/.test(ctx.callbackQuery.data ?? "")) || ctx.message?.text?.startsWith("/")) clearPositions?.();
+    if ((ctx.callbackQuery && !ctx.callbackQuery.data?.startsWith("auth:")) || ctx.message?.text?.startsWith("/")) clearApprovals?.();
     await next();
   });
   const logos = registerLogos(bot, state, cfg.chains);
+  clearApprovals = registerApprovals(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps }, { readToken: services.readToken, getRoute: services.getRoute });
+  clearPositions = registerPositions(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps,
+    slippage: (key) => settings(key).sellSlippageBps, refresh: refreshCard }, { readToken: services.readToken, getRoute: services.getRoute, sell: services.sell });
   clearFunds = registerFundsPanel(bot, { chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps, slippage: (key) => settings(key).buySlippageBps });
   registerWalletPanel(bot, { state, chains: cfg.chains, logos, directory: wallets, list: walletList, activeWallet, activeChain: activeKey,
     deps: getDeps, readToken: services.readToken, onSwitch: () => { input = null; pendingBuys.clear(); } });
-  const mainKeyboard = () => new InlineKeyboard().text("买入 / 查看代币", "nav:buy").text("持仓与余额", "nav:balance").row()
-    .text("钱包管理", "wallet:page:0").text("交易记录", `history:${activeWallet()}:${activeKey()}:0`).row()
+  const mainKeyboard = () => new InlineKeyboard().text("买入 / 查看代币", "nav:buy").text("持仓与盈亏", `positions:${activeKey()}:${activeWallet()}:0`).row()
+    .text("钱包管理", "wallet:page:0").text("余额", "nav:balance").row()
+    .text("交易记录", `history:${activeWallet()}:${activeKey()}:0`).text("授权管理", `auth:list:${activeKey()}:${activeWallet()}:0`).row()
     .text("转账 / 兑换 / 跨链", "funds:menu").row()
     .text("切换交易链", "nav:chain").text("设置", "nav:settings").row().text("止盈止损", "nav:tpsl").text("使用说明", "nav:help");
   const backKeyboard = () => new InlineKeyboard().text("返回首页", "nav:start");
@@ -201,7 +212,9 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       const value = sellQuote ? BigInt(sellQuote.routeSummary.amountOut) : null;
       lines.push(`持仓：${fmtUnits(info.balance, info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))}${value !== null ? ` ≈ ${fmtUnits(value, 18, 6)} ${chain.nativeSymbol}` : ""}`);
       if (pos && pos.cost > 0n) {
-        lines.push(`成本：${fmtUnits(pos.cost, 18, 6)} ${chain.nativeSymbol}${value !== null ? ` · 盈亏 ${(Number((value - pos.cost) * 10_000n / pos.cost) / 100).toFixed(1)}%` : ""}`, `自动止盈止损：${ruleText(pos)}`);
+        const book = calculatePnl(d.journal?.entries(walletId(d), chain.key) ?? []).books.get(token.toLowerCase());
+        const profit = floatingPnl(book, info.balance, value);
+        lines.push(`本地持仓成本：${fmtUnits(pos.cost, 18, 6)} ${chain.nativeSymbol}`, profit === null ? "浮动收益：账本成本链条或余额不完整，暂不可核对" : `浮动收益：${profit > 0n ? "+" : ""}${fmtUnits(profit, 18, 8)} ${chain.nativeSymbol}（报价估算，未扣 Gas）`, `自动止盈止损：${ruleText(pos)}`);
       }
     }
     lines.push(`钱包余额：${native === null ? "查询失败" : `${fmtUnits(native, 18, 6)} ${chain.nativeSymbol}`}`, `买入滑点 ${s.buySlippageBps / 100}% · 卖出滑点 ${s.sellSlippageBps / 100}%`, `更新：${timestamp()}（${state.display.timeZone}）`);
@@ -214,6 +227,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     if (info.balance > 0n) {
       s.sellPercentages.forEach((p, i) => { kb.text(`卖 ${p}%`, `s:${chain.key}:${walletId(d)}:${token}:${p}`); if ((i + 1) % 3 === 0) kb.row(); });
       kb.row().text("自定义卖出比例", `custom:s:${chain.key}:${walletId(d)}:${token}`).row();
+      kb.text("卖回本金", `exit:p:${chain.key}:${walletId(d)}:${token}`).text("按金额卖出", `exit:a:${chain.key}:${walletId(d)}:${token}`).row();
     }
     if (pos) kb.text(pos.tp !== null || pos.sl !== null ? "关闭止盈止损" : "开启止盈止损", `t:${chain.key}:${walletId(d)}:${token}`).row();
     kb.text("刷新", `r:${chain.key}:${walletId(d)}:${token}`).text("交易设置", `settings:${chain.key}`).row();

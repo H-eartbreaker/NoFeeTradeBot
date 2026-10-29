@@ -13,6 +13,7 @@ export type JournalEntry = {
   outputToken?: string; outputSymbol?: string; outputDecimals?: number;
   quotedAmountOut?: string; minimumOut?: string; amountOutEstimated?: boolean;
   balanceBefore?: string;
+  outputBalanceBefore?: string;
 };
 
 // 只记录公开交易数据；追加更新，不记录私钥、RPC凭据或交易签名。
