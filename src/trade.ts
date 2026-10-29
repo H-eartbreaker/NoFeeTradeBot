@@ -1,4 +1,4 @@
-import { erc20Abi, maxUint256, parseEther } from "viem";
+import { erc20Abi, maxUint256 } from "viem";
 import type { Address, Hex } from "viem";
 import type { ChainConfig } from "./chains.ts";
 import { NATIVE, buildSwap, getRoute } from "./kyber.ts";
@@ -7,8 +7,6 @@ import type { Clients } from "./wallet.ts";
 export type TradeDeps = { clients: Clients; chain: ChainConfig };
 export type BuyResult = { hash: Hex; received: bigint };
 export type SellResult = { hash: Hex; soldAmount: bigint; receivedNative: bigint; approveHash: Hex | null };
-
-const GAS_RESERVE = parseEther("0.0003");
 
 let queue: Promise<unknown> = Promise.resolve();
 // 同一钱包的交易必须串行，否则连点按钮会产生 nonce 冲突
@@ -35,7 +33,7 @@ async function sendAndWait(
   return { hash, receipt };
 }
 
-function balanceOf(d: TradeDeps, token: Address): Promise<bigint> {
+export function balanceOf(d: TradeDeps, token: Address): Promise<bigint> {
   return d.clients.publicClient.readContract({
     address: token,
     abi: erc20Abi,
@@ -69,7 +67,7 @@ export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps
   return serial(async () => {
     const { account, publicClient } = d.clients;
     const native = await publicClient.getBalance({ address: account.address });
-    if (native < amountWei + GAS_RESERVE) {
+    if (native < amountWei + d.chain.gasReserve) {
       throw new Error(`${d.chain.nativeSymbol} 余额不足（需要买入金额 + 少量 gas）`);
     }
     const route = await getRoute(slug(d.chain), NATIVE, token, amountWei);

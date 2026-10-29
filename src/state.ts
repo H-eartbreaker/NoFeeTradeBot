@@ -1,7 +1,20 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-type StateData = { tokens: string[]; slippageBps: number | null };
+// cost 是买入花费的原生币（wei，字符串存储）；tp/sl 是百分比，null 表示不启用
+export type Position = { chain: string; token: string; cost: bigint; tp: number | null; sl: number | null };
+export type Rule = { tp: number | null; sl: number | null };
+
+type StoredPosition = { cost: string; tp: number | null; sl: number | null };
+type StateData = {
+  tokens: Record<string, string[]>;
+  slippageBps: number | null;
+  activeChain: string | null;
+  defaultRule: Rule;
+  positions: Record<string, StoredPosition>;
+};
+
+const posKey = (chain: string, token: string) => `${chain}:${token.toLowerCase()}`;
 
 export class State {
   private data: StateData;
@@ -9,17 +22,21 @@ export class State {
 
   constructor(file: string) {
     this.file = file;
-    this.data = { tokens: [], slippageBps: null };
+    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {} };
     try {
-      const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<StateData>;
-      this.data = { tokens: parsed.tokens ?? [], slippageBps: parsed.slippageBps ?? null };
+      const p = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+      // 旧版本的 tokens 是数组（只有 BSC）
+      const tokens = Array.isArray(p.tokens) ? { bsc: p.tokens as string[] } : ((p.tokens ?? {}) as Record<string, string[]>);
+      this.data = {
+        tokens,
+        slippageBps: (p.slippageBps as number | null) ?? null,
+        activeChain: (p.activeChain as string | null) ?? null,
+        defaultRule: (p.defaultRule as Rule | undefined) ?? { tp: null, sl: null },
+        positions: (p.positions as Record<string, StoredPosition> | undefined) ?? {},
+      };
     } catch {
       // 首次运行或文件损坏：从空状态开始
     }
-  }
-
-  get tokens(): string[] {
-    return this.data.tokens;
   }
 
   get slippageBps(): number | null {
@@ -31,9 +48,71 @@ export class State {
     this.save();
   }
 
-  addToken(addr: string): void {
-    if (this.data.tokens.includes(addr)) return;
-    this.data.tokens.push(addr);
+  get activeChain(): string | null {
+    return this.data.activeChain;
+  }
+
+  setActiveChain(key: string): void {
+    this.data.activeChain = key;
+    this.save();
+  }
+
+  get defaultRule(): Rule {
+    return this.data.defaultRule;
+  }
+
+  setDefaultRule(rule: Rule): void {
+    this.data.defaultRule = rule;
+    this.save();
+  }
+
+  tokens(chain: string): string[] {
+    return this.data.tokens[chain] ?? [];
+  }
+
+  position(chain: string, token: string): Position | null {
+    const p = this.data.positions[posKey(chain, token)];
+    return p ? { chain, token: token.toLowerCase(), cost: BigInt(p.cost), tp: p.tp, sl: p.sl } : null;
+  }
+
+  positions(): Position[] {
+    return Object.entries(this.data.positions).map(([k, p]) => {
+      const i = k.indexOf(":");
+      return { chain: k.slice(0, i), token: k.slice(i + 1), cost: BigInt(p.cost), tp: p.tp, sl: p.sl };
+    });
+  }
+
+  // 买入后调用：记录代币、累加成本；新仓位套用默认止盈止损，老仓位保留自己的规则
+  recordBuy(chain: string, token: string, spent: bigint): void {
+    const list = (this.data.tokens[chain] ??= []);
+    if (!list.includes(token)) list.push(token);
+    const key = posKey(chain, token);
+    const old = this.data.positions[key];
+    this.data.positions[key] = old
+      ? { ...old, cost: (BigInt(old.cost) + spent).toString() }
+      : { cost: spent.toString(), tp: this.data.defaultRule.tp, sl: this.data.defaultRule.sl };
+    this.save();
+  }
+
+  // 卖出后调用：按比例扣减成本，卖光则删除仓位
+  recordSell(chain: string, token: string, pct: number): void {
+    const key = posKey(chain, token);
+    const old = this.data.positions[key];
+    if (!old) return;
+    if (pct >= 100) delete this.data.positions[key];
+    else old.cost = ((BigInt(old.cost) * BigInt(100 - pct)) / 100n).toString();
+    this.save();
+  }
+
+  removePosition(chain: string, token: string): void {
+    if (delete this.data.positions[posKey(chain, token)]) this.save();
+  }
+
+  setRule(chain: string, token: string, rule: Rule): void {
+    const p = this.data.positions[posKey(chain, token)];
+    if (!p) return;
+    p.tp = rule.tp;
+    p.sl = rule.sl;
     this.save();
   }
 
