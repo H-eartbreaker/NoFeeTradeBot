@@ -6,12 +6,24 @@ export type Position = { chain: string; token: string; cost: bigint; tp: number 
 export type Rule = { tp: number | null; sl: number | null };
 
 type StoredPosition = { cost: string; tp: number | null; sl: number | null };
+export type ChainSettings = {
+  buySlippageBps?: number;
+  sellSlippageBps?: number;
+  buyAmounts?: string[];
+  sellPercentages?: number[];
+  buyConfirmation?: boolean;
+  quickBuy?: boolean;
+};
+export type DisplaySettings = { showChart: boolean; showExplorer: boolean; timeZone: string; hour12: boolean };
+const defaultDisplay = (): DisplaySettings => ({ showChart: true, showExplorer: true, timeZone: "Asia/Shanghai", hour12: false });
 type StateData = {
   tokens: Record<string, string[]>;
   slippageBps: number | null;
   activeChain: string | null;
   defaultRule: Rule;
   positions: Record<string, StoredPosition>;
+  chainSettings: Record<string, ChainSettings>;
+  display: DisplaySettings;
 };
 
 const posKey = (chain: string, token: string) => `${chain}:${token.toLowerCase()}`;
@@ -22,7 +34,7 @@ export class State {
 
   constructor(file: string) {
     this.file = file;
-    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {} };
+    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {}, chainSettings: {}, display: defaultDisplay() };
     try {
       const p = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
       // 旧版本的 tokens 是数组（只有 BSC）
@@ -33,6 +45,8 @@ export class State {
         activeChain: (p.activeChain as string | null) ?? null,
         defaultRule: (p.defaultRule as Rule | undefined) ?? { tp: null, sl: null },
         positions: (p.positions as Record<string, StoredPosition> | undefined) ?? {},
+        chainSettings: (p.chainSettings as Record<string, ChainSettings> | undefined) ?? {},
+        display: { ...defaultDisplay(), ...(p.display as Partial<DisplaySettings> | undefined) },
       };
     } catch {
       // 首次运行或文件损坏：从空状态开始
@@ -45,6 +59,29 @@ export class State {
 
   setSlippage(bps: number): void {
     this.data.slippageBps = bps;
+    this.save();
+  }
+
+  chainSettings(chain: string): ChainSettings {
+    return structuredClone(this.data.chainSettings[chain] ?? {});
+  }
+
+  setChainSettings(chain: string, patch: Partial<ChainSettings>): void {
+    this.data.chainSettings[chain] = { ...this.data.chainSettings[chain], ...structuredClone(patch) };
+    this.save();
+  }
+
+  resetChainSettings(chain: string): void {
+    delete this.data.chainSettings[chain];
+    this.save();
+  }
+
+  get display(): DisplaySettings {
+    return { ...this.data.display };
+  }
+
+  setDisplay(patch: Partial<DisplaySettings>): void {
+    this.data.display = { ...this.data.display, ...patch };
     this.save();
   }
 
@@ -100,7 +137,7 @@ export class State {
     const old = this.data.positions[key];
     if (!old) return;
     if (pct >= 100) delete this.data.positions[key];
-    else old.cost = ((BigInt(old.cost) * BigInt(100 - pct)) / 100n).toString();
+    else old.cost = ((BigInt(old.cost) * BigInt(10_000 - Math.round(pct * 100))) / 10_000n).toString();
     this.save();
   }
 

@@ -19,7 +19,7 @@ export function decide(cost: bigint, value: bigint, tp: number | null, sl: numbe
 export type MonitorOpts = {
   state: State;
   deps: Map<string, TradeDeps>;
-  slippageBps: () => number;
+  slippageBps: (chain: string) => number;
   notify: (html: string) => Promise<unknown>;
 };
 
@@ -48,7 +48,7 @@ export function startMonitor(o: MonitorOpts): () => void {
     const change = (Number(((value - pos.cost) * 10_000n) / pos.cost) / 100).toFixed(1);
     try {
       await o.notify(`🎯 <b>${label}触发</b> [${d.chain.label}]\n<code>${pos.token}</code>\n成本 ${fmtUnits(pos.cost, 18, 5)} ${sym} → 现值 ${fmtUnits(value, 18, 5)} ${sym}（${change}%），正在全部卖出…`);
-      const r = await sell(d, pos.token as Address, 100, o.slippageBps());
+      const r = await sell(d, pos.token as Address, 100, o.slippageBps(chain));
       o.state.recordSell(chain, token, 100);
       fails.delete(key);
       await o.notify(`✅ ${label}卖出成功，收到约 ${fmtUnits(r.receivedNative, 18, 6)} ${sym}\n<a href="${d.chain.explorerTx(r.hash)}">查看交易</a>`);

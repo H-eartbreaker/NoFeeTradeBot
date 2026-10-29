@@ -4,6 +4,7 @@ import { enableKeepAlive } from "./http.ts";
 import { configureCommandMenu } from "./menu.ts";
 import { startMonitor } from "./monitor.ts";
 import { State } from "./state.ts";
+import { tradingSettings } from "./settings.ts";
 import type { TradeDeps } from "./trade.ts";
 import { createClients } from "./wallet.ts";
 
@@ -35,7 +36,7 @@ await bot.start({
     startMonitor({
       state,
       deps,
-      slippageBps: () => state.slippageBps ?? cfg.defaultSlippageBps,
+      slippageBps: (chain) => tradingSettings(state, deps.get(chain)!.chain, cfg.defaultSlippageBps).sellSlippageBps,
       notify: (html) =>
         bot.api
           .sendMessage(cfg.allowedUserId, html, { parse_mode: "HTML", link_preview_options: { is_disabled: true } })

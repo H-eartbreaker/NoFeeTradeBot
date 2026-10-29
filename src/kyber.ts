@@ -13,6 +13,31 @@ export type RouteSummary = {
 };
 export type Route = { routeSummary: RouteSummary; routerAddress: Address };
 export type BuiltSwap = { data: Hex; routerAddress: Address; amountOut: bigint; transactionValue: bigint };
+export type RoutePool = { pool: string; exchange: string; tokenIn: string; tokenOut: string };
+
+export function routePools(route: Route): RoutePool[] {
+  const raw = route.routeSummary.route;
+  if (!Array.isArray(raw)) return [];
+  const pools = new Map<string, RoutePool>();
+  for (const path of raw) {
+    if (!Array.isArray(path)) continue;
+    for (const hop of path) {
+      if (!hop || typeof hop.pool !== "string") continue;
+      const entry = {
+        pool: hop.pool.toLowerCase(),
+        exchange: typeof hop.exchange === "string" ? hop.exchange : "未知交易所",
+        tokenIn: typeof hop.tokenIn === "string" ? hop.tokenIn.toLowerCase() : "",
+        tokenOut: typeof hop.tokenOut === "string" ? hop.tokenOut.toLowerCase() : "",
+      };
+      pools.set(JSON.stringify(entry), entry);
+    }
+  }
+  return [...pools.values()];
+}
+
+export function routeIdentity(route: Route): string {
+  return JSON.stringify([route.routerAddress.toLowerCase(), routePools(route).map((p) => JSON.stringify(p)).sort()]);
+}
 
 type Envelope<T> = { code: number; message: string; data?: T };
 
