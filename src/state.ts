@@ -38,6 +38,7 @@ type StateData = {
   autoPaused?: boolean;
   blacklist: Blacklist;
   tracked?: TrackedWallet[];
+  solanaSlippageBps: number;
 };
 
 const legacyTiers = (tp: number | null): Tier[] => (tp === null ? [] : [{ at: tp, pct: 100 }]);
@@ -54,7 +55,7 @@ export class State {
 
   constructor(file: string) {
     this.file = file;
-    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {}, chainSettings: {}, display: defaultDisplay(), activeWallet: "main", walletTokens: {}, appliedTransactions: [], autoPaused: false, blacklist: { tokens: [], developers: [] }, tracked: [] };
+    this.data = { tokens: {}, slippageBps: null, activeChain: null, defaultRule: { tp: null, sl: null }, positions: {}, chainSettings: {}, display: defaultDisplay(), activeWallet: "main", walletTokens: {}, appliedTransactions: [], autoPaused: false, blacklist: { tokens: [], developers: [] }, tracked: [], solanaSlippageBps: 100 };
     try {
       const p = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
       // 旧版本的 tokens 是数组（只有 BSC）
@@ -74,6 +75,7 @@ export class State {
         autoPaused: p.autoPaused === true,
         blacklist: { tokens: [], developers: [], ...(p.blacklist as Partial<Blacklist> | undefined) },
         tracked: Array.isArray(p.tracked) ? (p.tracked as TrackedWallet[]) : [],
+        solanaSlippageBps: Number.isInteger(p.solanaSlippageBps) ? (p.solanaSlippageBps as number) : 100,
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("本地状态文件无法读取或已损坏，请保留原文件并检查，未自动改写");
@@ -127,6 +129,15 @@ export class State {
 
   setTracked(list: TrackedWallet[]): void {
     this.data.tracked = structuredClone(list);
+    this.save();
+  }
+
+  get solanaSlippageBps(): number {
+    return this.data.solanaSlippageBps;
+  }
+
+  setSolanaSlippageBps(bps: number): void {
+    this.data.solanaSlippageBps = bps;
     this.save();
   }
 
