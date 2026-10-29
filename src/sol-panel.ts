@@ -33,6 +33,12 @@ type Options = {
   state: State; rpcUrl: string; chains: ChainConfig[]; logos: Logos;
   mainKeyboard: () => InlineKeyboard; navigate: (ctx: Context) => Promise<void>;
 };
+const defaultServices = {
+  holdings, mintInfo, solBalance, tokenMeta, quote, buySol, sellToken,
+  wallet: (): Pick<SolanaWallet, "address" | "signer" | "generate"> => new SolanaWallet(),
+  openRpc,
+};
+export type SolanaServices = typeof defaultServices;
 type DistributiveOmit<T> = T extends unknown ? Omit<T, "expires"> : never;
 
 const shortMint = (mint: string) => `${mint.slice(0, 4)}…${mint.slice(-4)}`;
@@ -53,9 +59,10 @@ function quoteLines(q: Quote): string[] {
 }
 
 // 第一版只做买卖和持仓：不做止盈止损、订单和追踪，也不做蜜罐检测
-export function registerSolana(bot: Bot, o: Options) {
-  const wallet = new SolanaWallet();
-  const rpc: SolRpc = openRpc(o.rpcUrl);
+export function registerSolana(bot: Bot, o: Options, overrides: Partial<SolanaServices> = {}) {
+  const { holdings, mintInfo, solBalance, tokenMeta, quote, buySol, sellToken, ...services } = { ...defaultServices, ...overrides };
+  const wallet = services.wallet();
+  const rpc: SolRpc = services.openRpc(o.rpcUrl);
   const pending = new Map<string, Pending>();
   const metaCache = new Map<string, TokenMeta>();
   let input: Input | null = null;

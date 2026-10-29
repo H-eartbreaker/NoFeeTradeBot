@@ -18,6 +18,7 @@ import { registerApprovals } from "./approvals-panel.ts";
 import { registerOrders } from "./orders-panel.ts";
 import { registerTracked } from "./tracked-panel.ts";
 import { registerSolana } from "./sol-panel.ts";
+import type { SolanaServices } from "./sol-panel.ts";
 import { SOLANA } from "./sol-settings.ts";
 import { OrderStore } from "./orders.ts";
 import type { Config } from "./config.ts";
@@ -77,7 +78,7 @@ function riskIdentity(report: RiskReport | null): string {
   return JSON.stringify(report ? [report.isHoneypot, report.buyTax, report.sellTax] : null);
 }
 
-export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: State, overrides: Partial<Services> = {}, wallets?: Wallets, orders: OrderStore = new OrderStore("data/orders.json")): Bot {
+export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: State, overrides: Partial<Services> = {}, wallets?: Wallets, orders: OrderStore = new OrderStore("data/orders.json"), solanaOverrides: Partial<SolanaServices> = {}): Bot {
   const services = { ...defaults, ...overrides };
   const bot = new Bot(cfg.botToken, { client: { fetch: nativeFetch } });
   installButtonIcons(bot);
@@ -109,7 +110,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   });
   const displayChains = [...cfg.chains, SOLANA];
   const logos = registerLogos(bot, state, displayChains);
-  const solana = registerSolana(bot, { state, rpcUrl: cfg.solanaRpcUrl, chains: cfg.chains, logos, mainKeyboard: () => mainKeyboard(), navigate: home });
+  const solana = registerSolana(bot, { state, rpcUrl: cfg.solanaRpcUrl, chains: cfg.chains, logos, mainKeyboard: () => mainKeyboard(), navigate: home }, solanaOverrides);
   clearApprovals = registerApprovals(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps }, { readToken: services.readToken, getRoute: services.getRoute });
   clearPositions = registerPositions(bot, { state, chains: cfg.chains, logos, activeChain: activeKey, activeWallet, deps: getDeps,
     slippage: (key) => settings(key).sellSlippageBps, refresh: refreshCard }, { readToken: services.readToken, getRoute: services.getRoute, sell: services.sell });
