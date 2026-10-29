@@ -1,6 +1,7 @@
 import { createBot } from "./bot.ts";
 import { loadConfig } from "./config.ts";
 import { enableKeepAlive } from "./http.ts";
+import { configureCommandMenu } from "./menu.ts";
 import { startMonitor } from "./monitor.ts";
 import { State } from "./state.ts";
 import type { TradeDeps } from "./trade.ts";
@@ -28,6 +29,9 @@ await bot.start({
   onStart: (me) => {
     clearTimeout(timer);
     console.log(`机器人 @${me.username} 已启动`);
+    void configureCommandMenu(bot.api, cfg.allowedUserId)
+      .then(() => console.log("命令菜单已更新"))
+      .catch(() => console.error("命令菜单更新失败，下次启动时会重试"));
     startMonitor({
       state,
       deps,
