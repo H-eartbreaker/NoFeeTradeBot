@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2",
+    "@solana/kit": "^8.6.0",
     "grammy": "^1.46.0",
     "undici": "^8.12.3",
     "viem": "^2.57.13"
