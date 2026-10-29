@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard, InputFile } from "grammy";
 import type { Bot, Context } from "grammy";
 import type { Address } from "viem";
 import type { ChainConfig } from "./chains.ts";
@@ -8,6 +8,9 @@ import type { Route } from "./kyber.ts";
 import type { Logos } from "./logos.ts";
 import { swapBudget } from "./money.ts";
 import { calculatePnl, floatingPnl, unrecoveredPrincipal } from "./pnl.ts";
+import type { TokenBook } from "./pnl.ts";
+import { renderPnlCard } from "./pnl-card.ts";
+import type { PnlCardRow } from "./pnl-card.ts";
 import { parseNativeAmount } from "./settings.ts";
 import type { State } from "./state.ts";
 import { readToken } from "./token.ts";
@@ -22,7 +25,8 @@ type Options = { state: State; chains: ChainConfig[]; logos: Logos; activeChain:
 type Input = { chain: string; wallet: string; token: Address; expires: number; source?: number };
 type Exit = Input & { id: string; amount: bigint; balance: bigint; target: bigint; slip: number; route: Route; minimum: bigint; budget: bigint; owner: Address };
 const HTML = { parse_mode: "HTML", link_preview_options: { is_disabled: true } } as const;
-const signed = (value: bigint) => `${value > 0n ? "+" : ""}${fmtUnits(value, 18, 8)}`;
+const CARD_TOKENS = 20;
+const signed =(value: bigint) => `${value > 0n ? "+" : ""}${fmtUnits(value, 18, 8)}`;
 
 export async function quoteExit(d: TradeDeps, token: Address, balance: bigint, target: bigint, slip: number, quote: typeof getRoute = getRoute): Promise<{ amount: bigint; route: Route }> {
   if (target <= 0n || balance <= 0n || !Number.isInteger(slip) || slip < 1 || slip > 9999) throw new Error("目标金额、余额或滑点无效");
@@ -47,23 +51,49 @@ export function registerPositions(bot: Bot, o: Options, overrides: Partial<typeo
   const back = () => new InlineKeyboard().text("持仓与盈亏", `positions:${o.activeChain()}:${o.activeWallet()}:0`).text("返回首页", "nav:start");
   const reply = (ctx: Context, text: string, kb: InlineKeyboard) => ctx.reply(text, { ...HTML, reply_markup: kb });
   const report = (d: TradeDeps) => calculatePnl(d.journal?.entries(d.walletId ?? "main", d.chain.key) ?? []);
+  const tracked = (chain: string, wallet: string, books: Map<string, TokenBook>) => [...new Set([...o.state.positions().filter((p) => p.chain === chain && p.wallet === wallet).map((p) => p.token), ...[...books].filter(([, b]) => b.quantity !== 0n).map(([token]) => token)])];
+  async function holding(d: TradeDeps, token: Address, book: TokenBook | undefined) {
+    const info = await s.readToken(d.clients, token).catch(() => null);
+    if (!info) return null;
+    const route = info.balance > 0n ? await s.getRoute(d.chain.kyberSlug!, info.address, NATIVE, info.balance).catch(() => null) : null;
+    const value = info.balance === 0n ? 0n : route ? BigInt(route.routeSummary.amountOut) : null;
+    return { info, value, profit: floatingPnl(book, info.balance, value), principal: unrecoveredPrincipal(book, info.balance) };
+  }
+  async function card(ctx: Context, chain: string, wallet: string) {
+    const d = o.deps(chain, wallet); if (!d) { await ctx.reply("钱包或链不可用"); return; }
+    const pnl = report(d);
+    const tokens = tracked(chain, wallet, pnl.books);
+    const rows: PnlCardRow[] = []; let floating = 0n; let floatingUnknown = 0; let principal: bigint | null = 0n;
+    const checked = await Promise.all(tokens.slice(0, CARD_TOKENS).map((token) => holding(d, token as Address, pnl.books.get(token))));
+    for (const h of checked) {
+      if (!h) { floatingUnknown++; continue; }
+      if (h.info.balance === 0n) continue;
+      if (h.profit !== null) floating += h.profit; else floatingUnknown++;
+      if (h.principal === null) principal = null; else if (principal !== null) principal += h.principal;
+      rows.push({ symbol: h.info.symbol, profit: h.profit, principal: h.principal });
+    }
+    try {
+      const png = renderPnlCard({ chainLabel: d.chain.label, nativeSymbol: d.chain.nativeSymbol, wallet: d.clients.account.address,
+        time: new Date().toLocaleString("zh-CN", { timeZone: o.state.display.timeZone, hour12: false }),
+        realized: pnl.realized, realizedTrades: pnl.realizedTrades, estimated: pnl.estimated, floating, floatingUnknown,
+        gas: pnl.gas, feeComplete: pnl.feeComplete, principal, rows, omitted: Math.max(0, tokens.length - CARD_TOKENS) });
+      await ctx.replyWithPhoto(new InputFile(png, "pnl.png"), { caption: "持仓盈亏图（收益未扣 Gas）", reply_markup: back() });
+    } catch (e) { await ctx.reply(`盈亏图片生成失败：${errMsg(e)}`, { reply_markup: back() }); }
+  }
   async function positions(ctx: Context, chain: string, wallet: string, requestedPage: number) {
     const d = o.deps(chain, wallet); if (!d) { await ctx.reply("钱包或链不可用"); return; }
     const pnl = report(d);
-    const tokens = [...new Set([...o.state.positions().filter((p) => p.chain === chain && p.wallet === wallet).map((p) => p.token), ...[...pnl.books].filter(([, b]) => b.quantity !== 0n).map(([token]) => token)])];
+    const tokens = tracked(chain, wallet, pnl.books);
     const last = Math.max(0, Math.ceil(tokens.length / 5) - 1); const page = Math.min(requestedPage, last);
     const kb = new InlineKeyboard(); let floating = 0n; let unknown = 0;
     const details = await Promise.all(tokens.slice(page * 5, page * 5 + 5).map(async (token) => {
-      const info = await s.readToken(d.clients, token as Address).catch(() => null);
-      if (!info) { unknown++; return `\n<code>${token}</code>\n代币信息暂不可读`; }
-      const route = info.balance > 0n ? await s.getRoute(d.chain.kyberSlug!, info.address, NATIVE, info.balance).catch(() => null) : null;
-      const value = info.balance === 0n ? 0n : route ? BigInt(route.routeSummary.amountOut) : null;
-      const book = pnl.books.get(token); const profit = floatingPnl(book, info.balance, value);
+      const h = await holding(d, token as Address, pnl.books.get(token));
+      if (!h) { unknown++; return `\n<code>${token}</code>\n代币信息暂不可读`; }
+      const { info, value, profit, principal } = h;
       if (profit !== null) floating += profit; else if (info.balance > 0n) unknown++;
       const lines = ["", `<b>${escapeHtml(info.symbol.slice(0, 30))}</b> · ${fmtUnits(info.balance, info.decimals, 8)}`, `<code>${token}</code>`,
         `卖出报价：${value === null ? "暂不可查" : `${fmtUnits(value, 18, 8)} ${d.chain.nativeSymbol}`}`,
         profit === null ? "浮动收益：成本链条或余额无法完整核对" : `浮动收益：${signed(profit)} ${d.chain.nativeSymbol}（未扣 Gas）`];
-      const principal = unrecoveredPrincipal(book, info.balance);
       if (principal !== null && info.balance > 0n) lines.push(`尚未收回本金：${fmtUnits(principal, 18, 8)} ${d.chain.nativeSymbol}（未计 Gas）`);
       if (info.balance > 0n) kb.text(`${info.symbol.slice(0, 12)} · 买卖`, `r:${chain}:${wallet}:${token}`).row();
       return lines.join("\n");
@@ -77,7 +107,7 @@ export function registerPositions(bot: Bot, o: Options, overrides: Partial<typeo
       "", "只统计本地账本可核对部分；未知成本不按零计算，报价不代表已成交。各链单独用原生币核算。"];
     for (const c of o.chains) o.logos.button(kb.row(), c, c.label, `positions:${c.key}:${wallet}:0`);
     kb.row(); if (page > 0) kb.text("上一页", `positions:${chain}:${wallet}:${page - 1}`); if (page < last) kb.text("下一页", `positions:${chain}:${wallet}:${page + 1}`);
-    kb.row().text("刷新", `positions:${chain}:${wallet}:${page}`).text("返回首页", "nav:start");
+    kb.row().text("盈亏图片", `pcard:${chain}:${wallet}`).text("刷新", `positions:${chain}:${wallet}:${page}`).text("返回首页", "nav:start");
     await reply(ctx, lines.join("\n"), kb);
   }
   async function preview(ctx: Context, p: Input, target?: bigint) {
@@ -130,6 +160,7 @@ export function registerPositions(bot: Bot, o: Options, overrides: Partial<typeo
   }
   bot.command("positions", async (ctx) => { clear(); await positions(ctx, o.activeChain(), o.activeWallet(), 0); });
   bot.callbackQuery(/^positions:([a-z]+):([a-z0-9]{1,4}):(\d{1,4})$/, async (ctx) => { clear(); await ctx.answerCallbackQuery(); await positions(ctx, ctx.match[1], ctx.match[2], Number(ctx.match[3])); });
+  bot.callbackQuery(/^pcard:([a-z]+):([a-z0-9]{1,4})$/, async (ctx) => { clear(); await ctx.answerCallbackQuery("正在生成…"); await card(ctx, ctx.match[1], ctx.match[2]); });
   bot.callbackQuery(/^exit:([pa]):([a-z]+):([a-z0-9]{1,4}):(0x[0-9a-f]{40})$/, async (ctx) => {
     clear(); await ctx.answerCallbackQuery();
     const p: Input = { chain: ctx.match[2], wallet: ctx.match[3], token: ctx.match[4] as Address, source: ctx.callbackQuery.message?.message_id, expires: Date.now() + 300000 };

@@ -17,6 +17,7 @@ export function buttonIcon(text: string, data?: string): string | null {
   if (/^wallet:(select|new):/.test(data)) return "✅";
   if (/^history:/.test(data)) return "📜";
   if (/^positions:/.test(data)) return "📊";
+  if (/^pcard:/.test(data)) return "🖼️";
   if (/^exit:p:/.test(data)) return "💵";
   if (/^exit:a:/.test(data)) return "💸";
   if (/^exit:confirm:/.test(data)) return "✅";

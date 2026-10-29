@@ -82,7 +82,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     if (ctx.from?.id !== cfg.allowedUserId || ctx.chat?.type !== "private") return;
     if (ctx.callbackQuery || ctx.message?.text?.startsWith("/")) input = null;
     if ((ctx.callbackQuery && !ctx.callbackQuery.data?.startsWith("funds:")) || ctx.message?.text?.startsWith("/")) clearFunds?.();
-    if ((ctx.callbackQuery && !/^(exit|positions):/.test(ctx.callbackQuery.data ?? "")) || ctx.message?.text?.startsWith("/")) clearPositions?.();
+    if ((ctx.callbackQuery && !/^(exit|positions|pcard):/.test(ctx.callbackQuery.data ?? "")) || ctx.message?.text?.startsWith("/")) clearPositions?.();
     if ((ctx.callbackQuery && !ctx.callbackQuery.data?.startsWith("auth:")) || ctx.message?.text?.startsWith("/")) clearApprovals?.();
     await next();
   });
