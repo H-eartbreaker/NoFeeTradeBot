@@ -287,14 +287,19 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     if (amount === undefined) return void (await ctx.answerCallbackQuery("无效的买入档位"));
     const sym = d.chain.nativeSymbol;
     await ctx.answerCallbackQuery("买入提交中…");
-    const pending = await ctx.reply(`⏳ 买入中 ${formatEther(amount)} ${sym}…`);
+    const pendingP = ctx.reply(`⏳ 买入中 ${formatEther(amount)} ${sym}…`);
+    pendingP.catch(() => undefined);
     try {
-      const report = await risk(d, token);
-      if (report?.isHoneypot) throw new Error("检测到貔貅盘，已拒绝买入");
-      const info = await readToken(d.clients, token);
-      if (!info) throw new Error("不是有效的代币合约");
-      const r = await buy(d, token, amount, slippage());
+      const infoP = readToken(d.clients, token);
+      const gate = Promise.all([risk(d, token), infoP]).then(([report, info]) => {
+        if (!info) throw new Error("不是有效的代币合约");
+        if (report?.isHoneypot) throw new Error("检测到貔貅盘，已拒绝买入");
+      });
+      gate.catch(() => undefined);
+      const r = await buy(d, token, amount, slippage(), gate);
+      const info = (await infoP)!;
       state.recordBuy(d.chain.key, token, amount);
+      const pending = await pendingP;
       await ctx.api.editMessageText(
         ctx.chat!.id,
         pending.message_id,
@@ -303,6 +308,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       );
       await refreshCard(ctx, d, token, r.blockNumber);
     } catch (e) {
+      const pending = await pendingP;
       await ctx.api.editMessageText(ctx.chat!.id, pending.message_id, `❌ 买入失败: ${errMsg(e)}`);
     }
   });
@@ -314,12 +320,16 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     const pct = Number(ctx.match[3]);
     const sym = d.chain.nativeSymbol;
     await ctx.answerCallbackQuery("卖出提交中…");
-    const pending = await ctx.reply(`⏳ 卖出 ${pct}% 中…`);
+    const pendingP = ctx.reply(`⏳ 卖出 ${pct}% 中…`);
+    pendingP.catch(() => undefined);
     try {
-      const info = await readToken(d.clients, token);
-      if (!info) throw new Error("不是有效的代币合约");
+      const infoP = readToken(d.clients, token);
+      infoP.catch(() => undefined);
       const r = await sell(d, token, pct, slippage());
+      const info = await infoP;
+      if (!info) throw new Error("不是有效的代币合约");
       state.recordSell(d.chain.key, token, pct);
+      const pending = await pendingP;
       const approveNote = r.approveHash ? `\n（含一次授权: <a href="${d.chain.explorerTx(r.approveHash)}">交易</a>）` : "";
       await ctx.api.editMessageText(
         ctx.chat!.id,
@@ -329,6 +339,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       );
       await refreshCard(ctx, d, token, r.blockNumber);
     } catch (e) {
+      const pending = await pendingP;
       await ctx.api.editMessageText(ctx.chat!.id, pending.message_id, `❌ 卖出失败: ${errMsg(e)}`);
     }
   });

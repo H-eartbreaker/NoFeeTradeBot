@@ -1,11 +1,18 @@
 import { createBot } from "./bot.ts";
 import { loadConfig } from "./config.ts";
+import { enableKeepAlive } from "./http.ts";
 import { startMonitor } from "./monitor.ts";
 import { State } from "./state.ts";
 import type { TradeDeps } from "./trade.ts";
 import { createClients } from "./wallet.ts";
 
 const cfg = loadConfig();
+enableKeepAlive([
+  "https://api.telegram.org",
+  "https://aggregator-api.kyberswap.com",
+  "https://api.honeypot.is",
+  ...cfg.chains.map((c) => c.rpcUrls[0]),
+]);
 const state = new State("data/state.json");
 const deps = new Map<string, TradeDeps>(
   cfg.chains.map((chain) => [chain.key, { chain, clients: createClients(cfg.privateKey, chain) }]),

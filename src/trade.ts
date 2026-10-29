@@ -26,8 +26,9 @@ async function sendAndWait(
   tx: { to: Address; data: Hex; value: bigint },
 ) {
   const { account, publicClient, walletClient } = clients;
-  const estimate = await publicClient.estimateGas({ account, ...tx });
-  const hash = await walletClient.sendTransaction({ ...tx, gas: (estimate * 12n) / 10n });
+  // gas 估算、nonce、手续费并行取回，再一次发出
+  const req = await walletClient.prepareTransactionRequest({ account, chain: walletClient.chain, ...tx });
+  const hash = await walletClient.sendTransaction({ ...req, gas: ((req.gas ?? 0n) * 12n) / 10n } as never);
   const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 90_000 });
   if (receipt.status !== "success") throw new Error(`交易在链上失败: ${hash}`);
   return { hash, receipt };
@@ -64,16 +65,23 @@ async function ensureAllowance(d: TradeDeps, token: Address, spender: Address, n
   return hash;
 }
 
-export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps: number): Promise<BuyResult> {
+// gate: 发送交易前必须通过的检查（如貔貅检测），和报价、生成交易数据并行进行以省时间
+export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps: number, gate?: Promise<unknown>): Promise<BuyResult> {
   return serial(async () => {
     const { account, publicClient } = d.clients;
-    const native = await publicClient.getBalance({ address: account.address });
+    const prep = (async () => {
+      const route = await getRoute(slug(d.chain), NATIVE, token, amountWei);
+      return buildSwap(slug(d.chain), route, account.address, slippageBps);
+    })();
+    const [native, before, swap] = await Promise.all([
+      publicClient.getBalance({ address: account.address }),
+      balanceOf(d, token),
+      prep,
+      gate,
+    ]).then(([a, b, c]) => [a, b, c] as const);
     if (native < amountWei + d.chain.gasReserve) {
       throw new Error(`${d.chain.nativeSymbol} 余额不足（需要买入金额 + 少量 gas）`);
     }
-    const route = await getRoute(slug(d.chain), NATIVE, token, amountWei);
-    const swap = await buildSwap(slug(d.chain), route, account.address, slippageBps);
-    const before = await balanceOf(d, token);
     const { hash, receipt } = await sendAndWait(d, { to: swap.routerAddress, data: swap.data, value: swap.transactionValue });
     const after = await balanceOf(d, token, receipt.blockNumber);
     // 买入后在后台预先授权，之后卖出就省一笔交易；失败不影响买入，卖出时会自动补授权
@@ -87,7 +95,12 @@ export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps
 export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: number): Promise<SellResult> {
   return serial(async () => {
     const { account, publicClient } = d.clients;
-    const balance = await balanceOf(d, token);
+    // 免费节点可能落后一个区块，刚买完查到 0 时稍等重试几次
+    let balance = await balanceOf(d, token);
+    for (let i = 0; i < 3 && balance === 0n; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      balance = await balanceOf(d, token);
+    }
     const amount = (balance * BigInt(pct)) / 100n;
     if (amount <= 0n) throw new Error("没有可卖出的持仓");
 
@@ -95,8 +108,10 @@ export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: num
     const approveHash = await ensureAllowance(d, token, route.routerAddress, amount);
     if (approveHash) route = await getRoute(slug(d.chain), token, NATIVE, amount);
 
-    const swap = await buildSwap(slug(d.chain), route, account.address, slippageBps);
-    const nativeBefore = await publicClient.getBalance({ address: account.address });
+    const [swap, nativeBefore] = await Promise.all([
+      buildSwap(slug(d.chain), route, account.address, slippageBps),
+      publicClient.getBalance({ address: account.address }),
+    ]);
     const { hash, receipt } = await sendAndWait(d, {
       to: swap.routerAddress,
       data: swap.data,
