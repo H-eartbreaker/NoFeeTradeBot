@@ -21,6 +21,17 @@ export function hasRule(r: { sl: number | null; trail: number | null; tiers: Tie
   return r.sl !== null || r.trail !== null || r.tiers.length > 0;
 }
 
+export type RuleKind = "sl" | "trail" | "tp";
+
+// 被单独暂停的规则不参与判断，但设置保留，恢复后原样生效
+export function enabledRule<T extends { sl: number | null; trail: number | null; tiers: Tier[]; paused: RuleKind[] }>(p: T): { sl: number | null; trail: number | null; tiers: Tier[] } {
+  return {
+    sl: p.paused.includes("sl") ? null : p.sl,
+    trail: p.paused.includes("trail") ? null : p.trail,
+    tiers: p.paused.includes("tp") ? [] : p.tiers,
+  };
+}
+
 export type ParsedRule = { tp: number | null; sl: number | null; tiers: Tier[]; trail: number | null };
 
 // "100 30" 表示涨 100% 全部卖、跌 30% 全部卖；"50/50 100/100 sl30 trail20" 表示分档止盈、固定止损和移动止损

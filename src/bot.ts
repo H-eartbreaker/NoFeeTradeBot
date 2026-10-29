@@ -11,7 +11,7 @@ import { registerFundsPanel } from "./funds-panel.ts";
 import { registerPositions } from "./positions-panel.ts";
 import { calculatePnl, floatingPnl } from "./pnl.ts";
 import { hasRule, parseRule } from "./auto-rules.ts";
-import type { Tier } from "./auto-rules.ts";
+import type { RuleKind, Tier } from "./auto-rules.ts";
 import { registerApprovals } from "./approvals-panel.ts";
 import { registerOrders } from "./orders-panel.ts";
 import { OrderStore } from "./orders.ts";
@@ -43,10 +43,14 @@ function usd(value: string | undefined): string {
   const n = Number(value);
   return value !== undefined && Number.isFinite(n) ? `$${n.toFixed(n < 1 ? 4 : 2)}` : "未知";
 }
-function ruleText(r: { tp: number | null; sl: number | null; tiers?: Tier[]; trail?: number | null }): string {
+function ruleText(r: { tp: number | null; sl: number | null; tiers?: Tier[]; trail?: number | null }, paused: RuleKind[] = []): string {
   const tiers = r.tiers ?? (r.tp !== null ? [{ at: r.tp, pct: 100 }] : []);
-  return [...tiers.map((t) => t.pct === 100 ? `止盈 +${t.at}%` : `止盈 +${t.at}% 卖 ${t.pct}%`), r.sl !== null ? `止损 -${r.sl}%` : null, r.trail != null ? `移动止损 -${r.trail}%` : null]
-    .filter(Boolean).join(" / ") || "未设置";
+  const tag = (kind: RuleKind) => (paused.includes(kind) ? "（已暂停）" : "");
+  return [
+    ...tiers.map((t) => (t.pct === 100 ? `止盈 +${t.at}%` : `止盈 +${t.at}% 卖 ${t.pct}%`) + tag("tp")),
+    r.sl !== null ? `止损 -${r.sl}%${tag("sl")}` : null,
+    r.trail != null ? `移动止损 -${r.trail}%${tag("trail")}` : null,
+  ].filter(Boolean).join(" / ") || "未设置";
 }
 function riskLines(report: RiskReport | null): string[] {
   const tax = (n: number | null | undefined) => n === null || n === undefined || !Number.isFinite(n) ? "未知" : `${n.toFixed(2)}%`;
@@ -225,7 +229,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       if (pos && pos.cost > 0n) {
         const book = calculatePnl(d.journal?.entries(walletId(d), chain.key) ?? []).books.get(token.toLowerCase());
         const profit = floatingPnl(book, info.balance, value);
-        lines.push(`本地持仓成本：${fmtUnits(pos.cost, 18, 6)} ${chain.nativeSymbol}`, profit === null ? "浮动收益：账本成本链条或余额不完整，暂不可核对" : `浮动收益：${profit > 0n ? "+" : ""}${fmtUnits(profit, 18, 8)} ${chain.nativeSymbol}（报价估算，未扣 Gas）`, `自动止盈止损：${hasRule(pos) ? ruleText(pos) : "未开启"}`);
+        lines.push(`本地持仓成本：${fmtUnits(pos.cost, 18, 6)} ${chain.nativeSymbol}`, profit === null ? "浮动收益：账本成本链条或余额不完整，暂不可核对" : `浮动收益：${profit > 0n ? "+" : ""}${fmtUnits(profit, 18, 8)} ${chain.nativeSymbol}（报价估算，未扣 Gas）`, `自动止盈止损：${hasRule(pos) ? ruleText(pos, pos.paused) : "未开启"}`);
       }
     }
     lines.push(`钱包余额：${native === null ? "查询失败" : `${fmtUnits(native, 18, 6)} ${chain.nativeSymbol}`}`, `买入滑点 ${s.buySlippageBps / 100}% · 卖出滑点 ${s.sellSlippageBps / 100}%`, `更新：${timestamp()}（${state.display.timeZone}）`);
@@ -241,6 +245,14 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       kb.text("卖回本金", `exit:p:${chain.key}:${walletId(d)}:${token}`).text("按金额卖出", `exit:a:${chain.key}:${walletId(d)}:${token}`).row();
     }
     if (pos) kb.text(hasRule(pos) ? "关闭止盈止损" : "开启止盈止损", `t:${chain.key}:${walletId(d)}:${token}`).row();
+    if (pos && hasRule(pos)) {
+      const rules: [RuleKind, string][] = [];
+      if (pos.tiers.length) rules.push(["tp", "止盈"]);
+      if (pos.sl !== null) rules.push(["sl", "止损"]);
+      if (pos.trail !== null) rules.push(["trail", "移动止损"]);
+      for (const [kind, label] of rules) kb.text(pos.paused.includes(kind) ? `▶️ 恢复${label}` : `⏸️ 暂停${label}`, `rule:${kind}:${chain.key}:${walletId(d)}:${token}`);
+      kb.row();
+    }
     kb.text("自动订单", `ord:m:${chain.key}:${walletId(d)}:${token.toLowerCase()}`).row();
     kb.text("刷新", `r:${chain.key}:${walletId(d)}:${token}`).text("交易设置", `settings:${chain.key}`).row();
     if (state.display.showExplorer) kb.url("区块浏览器", chain.explorerTx(token).replace("/tx/", "/address/"));
@@ -475,6 +487,20 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     if (hasRule(pos)) { state.setRule(d.chain.key, token, { tp: null, sl: null }, walletId(d)); await ctx.answerCallbackQuery("已关闭止盈止损"); }
     else if (!hasRule({ sl: state.defaultRule.sl, trail: state.defaultRule.trail ?? null, tiers: state.defaultRule.tiers ?? (state.defaultRule.tp !== null ? [{ at: state.defaultRule.tp, pct: 100 }] : []) })) { await ctx.answerCallbackQuery("先在首页设置默认止盈止损"); return; }
     else { state.setRule(d.chain.key, token, state.defaultRule, walletId(d)); await ctx.answerCallbackQuery("已开启止盈止损"); }
+    await showCard(ctx, d, token, true);
+  });
+  bot.callbackQuery(new RegExp(`^rule:(sl|trail|tp):${KEY}:${WALLET}:${ADDR}$`), async (ctx) => {
+    const d = dep(ctx, ctx.match[2], ctx.match[3]); if (!d) return;
+    const kind = ctx.match[1] as RuleKind;
+    const token = ctx.match[4] as Address;
+    const pos = state.position(d.chain.key, token, walletId(d));
+    if (!pos) { await ctx.answerCallbackQuery("没有这个仓位的买入记录"); return; }
+    const exists = kind === "sl" ? pos.sl !== null : kind === "trail" ? pos.trail !== null : pos.tiers.length > 0;
+    if (!exists) { await ctx.answerCallbackQuery("这条规则未设置"); return; }
+    const paused = !pos.paused.includes(kind);
+    const label = kind === "sl" ? "止损" : kind === "trail" ? "移动止损" : "止盈";
+    state.setRulePaused(d.chain.key, token, walletId(d), kind, paused);
+    await ctx.answerCallbackQuery(paused ? `已暂停${label}` : `已恢复${label}`);
     await showCard(ctx, d, token, true);
   });
   bot.callbackQuery(new RegExp(`^custom:([bs]):${KEY}:${WALLET}:${ADDR}$`), async (ctx) => {

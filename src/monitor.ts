@@ -1,5 +1,5 @@
 import type { Address } from "viem";
-import { evaluate, hasRule } from "./auto-rules.ts";
+import { enabledRule, evaluate, hasRule } from "./auto-rules.ts";
 import { NATIVE, getRoute } from "./kyber.ts";
 import type { State } from "./state.ts";
 import { balanceOf, ConfirmedTransactionError, PendingTransactionError, sell } from "./trade.ts";
@@ -30,7 +30,9 @@ export function startMonitor(o: MonitorOpts): () => void {
   async function check(chain: string, token: string, wallet: string): Promise<void> {
     const pos = o.state.position(chain, token, wallet);
     const d = o.getDeps?.(wallet, chain) ?? (wallet === "main" ? o.deps.get(chain) : undefined);
-    if (!pos || !d || !hasRule(pos)) return;
+    if (!pos || !d) return;
+    const rule = enabledRule(pos);
+    if (!hasRule(rule)) return;
     if (d.journal?.pending(wallet, chain, token)) return;
     const key = `${wallet}:${chain}:${pos.token}`;
 
@@ -44,7 +46,7 @@ export function startMonitor(o: MonitorOpts): () => void {
     zeros.delete(key);
     const route = await ops.getRoute(d.chain.kyberSlug!, pos.token as Address, NATIVE, balance);
     const value = BigInt(route.routeSummary.amountOut);
-    const evaluation = evaluate({ cost: pos.cost, value, sl: pos.sl, trail: pos.trail, tiers: pos.tiers, done: pos.done, peak: pos.peak });
+    const evaluation = evaluate({ cost: pos.cost, value, sl: rule.sl, trail: rule.trail, tiers: rule.tiers, done: pos.done, peak: pos.peak });
     if (evaluation.peak !== pos.peak) o.state.setAutoProgress(chain, token, wallet, { peak: evaluation.peak });
     const action = evaluation.action;
     if (!action) return;

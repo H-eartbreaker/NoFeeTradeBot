@@ -1,13 +1,13 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Tier } from "./auto-rules.ts";
+import type { RuleKind, Tier } from "./auto-rules.ts";
 
 // cost 是买入花费的原生币（wei，字符串存储）；tp/sl/trail 是百分比，null 表示不启用
 // tiers 是分档止盈（at 为涨幅%，pct 为卖出当前余额的%）；done 为已执行档数；peak 为观察到的最高价值（wei）
-export type Position = { wallet: string; chain: string; token: string; cost: bigint; tp: number | null; sl: number | null; tiers: Tier[]; trail: number | null; done: number; peak: bigint };
+export type Position = { wallet: string; chain: string; token: string; cost: bigint; tp: number | null; sl: number | null; tiers: Tier[]; trail: number | null; done: number; peak: bigint; paused: RuleKind[] };
 export type Rule = { tp: number | null; sl: number | null; tiers?: Tier[]; trail?: number | null };
 
-type StoredPosition = { cost: string; tp: number | null; sl: number | null; tiers?: Tier[]; trail?: number | null; done?: number; peak?: string };
+type StoredPosition = { cost: string; tp: number | null; sl: number | null; tiers?: Tier[]; trail?: number | null; done?: number; peak?: string; paused?: RuleKind[] };
 export type ChainSettings = {
   buySlippageBps?: number;
   sellSlippageBps?: number;
@@ -36,7 +36,7 @@ type StateData = {
 
 const legacyTiers = (tp: number | null): Tier[] => (tp === null ? [] : [{ at: tp, pct: 100 }]);
 const toPosition = (wallet: string, chain: string, token: string, p: StoredPosition): Position => ({
-  wallet, chain, token, cost: BigInt(p.cost), tp: p.tp, sl: p.sl, tiers: p.tiers ?? legacyTiers(p.tp), trail: p.trail ?? null, done: p.done ?? 0, peak: BigInt(p.peak ?? "0"),
+  wallet, chain, token, cost: BigInt(p.cost), tp: p.tp, sl: p.sl, tiers: p.tiers ?? legacyTiers(p.tp), trail: p.trail ?? null, done: p.done ?? 0, peak: BigInt(p.peak ?? "0"), paused: p.paused ?? [],
 });
 
 const posKey = (chain: string, token: string, wallet = "main") => `${wallet === "main" ? "" : `${wallet}:`}${chain}:${token.toLowerCase()}`;
@@ -168,7 +168,7 @@ export class State {
     const old = this.data.positions[key];
     this.data.positions[key] = old
       ? { ...old, cost: (BigInt(old.cost) + spent).toString() }
-      : { cost: spent.toString(), tp: this.data.defaultRule.tp, sl: this.data.defaultRule.sl, tiers: this.data.defaultRule.tiers ?? legacyTiers(this.data.defaultRule.tp), trail: this.data.defaultRule.trail ?? null, done: 0 };
+      : { cost: spent.toString(), tp: this.data.defaultRule.tp, sl: this.data.defaultRule.sl, tiers: this.data.defaultRule.tiers ?? legacyTiers(this.data.defaultRule.tp), trail: this.data.defaultRule.trail ?? null, done: 0, paused: [] };
     this.markApplied(chain, wallet, hash); this.save();
   }
 
@@ -215,6 +215,16 @@ export class State {
     p.trail = rule.trail ?? null;
     p.done = 0;
     p.peak = "0";
+    p.paused = [];
+    this.save();
+  }
+
+  setRulePaused(chain: string, token: string, wallet: string, kind: RuleKind, paused: boolean): void {
+    const stored = this.data.positions[posKey(chain, token, wallet)];
+    if (!stored) return;
+    const current = new Set(stored.paused ?? []);
+    if (paused) current.add(kind); else current.delete(kind);
+    stored.paused = [...current];
     this.save();
   }
 
