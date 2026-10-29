@@ -1,4 +1,4 @@
-import { erc20Abi, parseEther } from "viem";
+import { erc20Abi, maxUint256, parseEther } from "viem";
 import type { Address, Hex } from "viem";
 import type { ChainConfig } from "./chains.ts";
 import { NATIVE, buildSwap, getRoute } from "./kyber.ts";
@@ -44,6 +44,27 @@ function balanceOf(d: TradeDeps, token: Address): Promise<bigint> {
   });
 }
 
+// 授权无限额度给聚合器路由合约（只影响该代币）；已有足够额度则不发交易
+async function ensureAllowance(d: TradeDeps, token: Address, spender: Address, needed: bigint): Promise<Hex | null> {
+  const { account, publicClient, walletClient } = d.clients;
+  const allowance = await publicClient.readContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: [account.address, spender],
+  });
+  if (allowance >= needed) return null;
+  const hash = await walletClient.writeContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [spender, maxUint256],
+  });
+  const r = await publicClient.waitForTransactionReceipt({ hash, timeout: 90_000 });
+  if (r.status !== "success") throw new Error(`授权交易失败: ${hash}`);
+  return hash;
+}
+
 export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps: number): Promise<BuyResult> {
   return serial(async () => {
     const { account, publicClient } = d.clients;
@@ -56,36 +77,24 @@ export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps
     const before = await balanceOf(d, token);
     const { hash } = await sendAndWait(d, { to: swap.routerAddress, data: swap.data, value: swap.transactionValue });
     const after = await balanceOf(d, token);
+    // 买入后在后台预先授权，之后卖出就省一笔交易；失败不影响买入，卖出时会自动补授权
+    void serial(() => ensureAllowance(d, token, swap.routerAddress, after)).catch((e) =>
+      console.log("后台预授权失败（卖出时会自动重试）:", e instanceof Error ? e.message.split("\n")[0] : e),
+    );
     return { hash, received: after - before };
   });
 }
 
 export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: number): Promise<SellResult> {
   return serial(async () => {
-    const { account, publicClient, walletClient } = d.clients;
+    const { account, publicClient } = d.clients;
     const balance = await balanceOf(d, token);
     const amount = (balance * BigInt(pct)) / 100n;
     if (amount <= 0n) throw new Error("没有可卖出的持仓");
 
     let route = await getRoute(slug(d.chain), token, NATIVE, amount);
-    let approveHash: Hex | null = null;
-    const allowance = await publicClient.readContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: "allowance",
-      args: [account.address, route.routerAddress],
-    });
-    if (allowance < amount) {
-      approveHash = await walletClient.writeContract({
-        address: token,
-        abi: erc20Abi,
-        functionName: "approve",
-        args: [route.routerAddress, amount],
-      });
-      const r = await publicClient.waitForTransactionReceipt({ hash: approveHash, timeout: 90_000 });
-      if (r.status !== "success") throw new Error(`授权交易失败: ${approveHash}`);
-      route = await getRoute(slug(d.chain), token, NATIVE, amount);
-    }
+    const approveHash = await ensureAllowance(d, token, route.routerAddress, amount);
+    if (approveHash) route = await getRoute(slug(d.chain), token, NATIVE, amount);
 
     const swap = await buildSwap(slug(d.chain), route, account.address, slippageBps);
     const nativeBefore = await publicClient.getBalance({ address: account.address });

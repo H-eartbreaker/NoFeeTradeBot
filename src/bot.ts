@@ -6,6 +6,7 @@ import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
 import type { RiskReport } from "./honeypot.ts";
 import { NATIVE, getRoute } from "./kyber.ts";
+import { nativeFetch } from "./native-fetch.ts";
 import type { Route } from "./kyber.ts";
 import { State } from "./state.ts";
 import { readToken } from "./token.ts";
@@ -22,14 +23,17 @@ function usd(s: string | undefined): string {
 }
 
 export function createBot(cfg: Config, clients: Clients, state: State): Bot {
-  const bot = new Bot(cfg.botToken);
+  const bot = new Bot(cfg.botToken, { client: { fetch: nativeFetch } });
   const deps = { clients, chain: cfg.chain };
   const sym = cfg.chain.nativeSymbol;
   const slippage = () => state.slippageBps ?? cfg.defaultSlippageBps;
 
   // 只服务白名单用户的私聊；其他人一律静默
   bot.use(async (ctx, next) => {
-    if (ctx.from?.id !== cfg.allowedUserId || ctx.chat?.type !== "private") return;
+    if (ctx.from?.id !== cfg.allowedUserId || ctx.chat?.type !== "private") {
+      console.log(`已忽略非白名单消息: 用户ID ${ctx.from?.id}（.env 里的 ALLOWED_USER_ID 是 ${cfg.allowedUserId}）`);
+      return;
+    }
     await next();
   });
 

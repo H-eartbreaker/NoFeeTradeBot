@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --env-file=.env src/index.ts",
+    "start": "NODE_USE_ENV_PROXY=1 node --env-file=.env src/index.ts",
     "check": "tsc --noEmit",
     "test": "node --test test/"
   },
