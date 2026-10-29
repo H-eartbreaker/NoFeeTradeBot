@@ -11,9 +11,11 @@ export type Blacklist = { isBlacklisted(kind: "token" | "developer", chain: stri
 // 报价估算的总价差（含手续费），由聚合器给出的美元金额计算；缺数据返回 null
 export function impactPct(route: Route | null): number | null {
   if (!route) return null;
+  if (typeof route.routeSummary.amountInUsd !== "string" || !route.routeSummary.amountInUsd.trim()
+    || typeof route.routeSummary.amountOutUsd !== "string" || !route.routeSummary.amountOutUsd.trim()) return null;
   const inUsd = Number(route.routeSummary.amountInUsd);
   const outUsd = Number(route.routeSummary.amountOutUsd);
-  if (!Number.isFinite(inUsd) || !Number.isFinite(outUsd) || inUsd <= 0) return null;
+  if (!Number.isFinite(inUsd) || !Number.isFinite(outUsd) || inUsd <= 0 || outUsd < 0) return null;
   return (1 - outUsd / inUsd) * 100;
 }
 
