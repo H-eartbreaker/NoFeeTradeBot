@@ -56,10 +56,10 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     }
   }
 
-  async function card(d: TradeDeps, token: Address): Promise<{ text: string; kb: InlineKeyboard } | null> {
+  async function card(d: TradeDeps, token: Address, blockNumber?: bigint): Promise<{ text: string; kb: InlineKeyboard } | null> {
     const { chain, clients } = d;
     const sym = chain.nativeSymbol;
-    const info = await readToken(clients, token);
+    const info = await readToken(clients, token, blockNumber);
     if (!info) return null;
     const [report, buyQuote, sellQuote] = await Promise.all([
       risk(d, token),
@@ -125,23 +125,25 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     return { text: lines.join("\n"), kb };
   }
 
-  async function showCard(ctx: Context, d: TradeDeps, token: Address, edit: boolean): Promise<void> {
-    const c = await card(d, token);
+  async function showCard(ctx: Context, d: TradeDeps, token: Address, edit: boolean, blockNumber?: bigint): Promise<void> {
+    const c = await card(d, token, blockNumber);
     if (!c) {
       await ctx.reply(`这个地址在 ${d.chain.label} 上不是有效的代币合约（用 /chain 可以切换链）`);
       return;
     }
     if (edit) {
-      await ctx.editMessageText(c.text, { ...HTML, reply_markup: c.kb }).catch(() => undefined);
+      await ctx.editMessageText(c.text, { ...HTML, reply_markup: c.kb }).catch((e) => {
+        if (!/not modified/i.test(errMsg(e))) console.log("编辑卡片失败:", errMsg(e));
+      });
     } else {
       await ctx.reply(c.text, { ...HTML, reply_markup: c.kb });
     }
   }
 
   // 交易结束后原地刷新卡片，避免按钮和持仓显示过期
-  async function refreshCard(ctx: Context, d: TradeDeps, token: Address): Promise<void> {
+  async function refreshCard(ctx: Context, d: TradeDeps, token: Address, blockNumber?: bigint): Promise<void> {
     try {
-      await showCard(ctx, d, token, true);
+      await showCard(ctx, d, token, true, blockNumber);
     } catch (e) {
       console.log("刷新卡片失败:", errMsg(e));
     }
@@ -299,7 +301,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
         `✅ 买入成功 ${formatEther(amount)} ${sym} → ${fmtUnits(r.received, info.decimals)} ${escapeHtml(info.symbol)}\n<a href="${d.chain.explorerTx(r.hash)}">查看交易</a>`,
         HTML,
       );
-      await refreshCard(ctx, d, token);
+      await refreshCard(ctx, d, token, r.blockNumber);
     } catch (e) {
       await ctx.api.editMessageText(ctx.chat!.id, pending.message_id, `❌ 买入失败: ${errMsg(e)}`);
     }
@@ -325,7 +327,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
         `✅ 卖出成功 ${fmtUnits(r.soldAmount, info.decimals)} ${escapeHtml(info.symbol)} → 约 ${fmtUnits(r.receivedNative, 18, 6)} ${sym}\n<a href="${d.chain.explorerTx(r.hash)}">查看交易</a>${approveNote}`,
         HTML,
       );
-      await refreshCard(ctx, d, token);
+      await refreshCard(ctx, d, token, r.blockNumber);
     } catch (e) {
       await ctx.api.editMessageText(ctx.chat!.id, pending.message_id, `❌ 卖出失败: ${errMsg(e)}`);
     }

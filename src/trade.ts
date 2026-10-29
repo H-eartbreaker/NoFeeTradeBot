@@ -5,8 +5,8 @@ import { NATIVE, buildSwap, getRoute } from "./kyber.ts";
 import type { Clients } from "./wallet.ts";
 
 export type TradeDeps = { clients: Clients; chain: ChainConfig };
-export type BuyResult = { hash: Hex; received: bigint };
-export type SellResult = { hash: Hex; soldAmount: bigint; receivedNative: bigint; approveHash: Hex | null };
+export type BuyResult = { hash: Hex; received: bigint; blockNumber: bigint };
+export type SellResult = { hash: Hex; soldAmount: bigint; receivedNative: bigint; approveHash: Hex | null; blockNumber: bigint };
 
 let queue: Promise<unknown> = Promise.resolve();
 // 同一钱包的交易必须串行，否则连点按钮会产生 nonce 冲突
@@ -33,12 +33,13 @@ async function sendAndWait(
   return { hash, receipt };
 }
 
-export function balanceOf(d: TradeDeps, token: Address): Promise<bigint> {
+export function balanceOf(d: TradeDeps, token: Address, blockNumber?: bigint): Promise<bigint> {
   return d.clients.publicClient.readContract({
     address: token,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [d.clients.account.address],
+    blockNumber,
   });
 }
 
@@ -73,13 +74,13 @@ export function buy(d: TradeDeps, token: Address, amountWei: bigint, slippageBps
     const route = await getRoute(slug(d.chain), NATIVE, token, amountWei);
     const swap = await buildSwap(slug(d.chain), route, account.address, slippageBps);
     const before = await balanceOf(d, token);
-    const { hash } = await sendAndWait(d, { to: swap.routerAddress, data: swap.data, value: swap.transactionValue });
-    const after = await balanceOf(d, token);
+    const { hash, receipt } = await sendAndWait(d, { to: swap.routerAddress, data: swap.data, value: swap.transactionValue });
+    const after = await balanceOf(d, token, receipt.blockNumber);
     // 买入后在后台预先授权，之后卖出就省一笔交易；失败不影响买入，卖出时会自动补授权
     void serial(() => ensureAllowance(d, token, swap.routerAddress, after)).catch((e) =>
       console.log("后台预授权失败（卖出时会自动重试）:", e instanceof Error ? e.message.split("\n")[0] : e),
     );
-    return { hash, received: after - before };
+    return { hash, received: after - before, blockNumber: receipt.blockNumber };
   });
 }
 
@@ -101,8 +102,8 @@ export function sell(d: TradeDeps, token: Address, pct: number, slippageBps: num
       data: swap.data,
       value: swap.transactionValue,
     });
-    const nativeAfter = await publicClient.getBalance({ address: account.address });
+    const nativeAfter = await publicClient.getBalance({ address: account.address, blockNumber: receipt.blockNumber });
     const gasCost = receipt.gasUsed * receipt.effectiveGasPrice;
-    return { hash, soldAmount: amount, receivedNative: nativeAfter - nativeBefore + gasCost, approveHash };
+    return { hash, soldAmount: amount, receivedNative: nativeAfter - nativeBefore + gasCost, approveHash, blockNumber: receipt.blockNumber };
   });
 }
