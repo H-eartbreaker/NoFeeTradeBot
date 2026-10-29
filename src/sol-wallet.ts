@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { parseEnv } from "node:util";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { createKeyPairSignerFromBytes, getAddressDecoder, getBase58Decoder, getBase58Encoder } from "@solana/kit";
-import type { KeyPairSigner } from "@solana/kit";
+import type { Address, KeyPairSigner } from "@solana/kit";
 
 const SECRET_BYTES = 64;
 
@@ -16,7 +16,7 @@ function decodeSecret(secret: string): Uint8Array {
   return bytes;
 }
 
-function addressOf(secret: string): string {
+function addressOf(secret: string): Address {
   return getAddressDecoder().decode(decodeSecret(secret).subarray(32));
 }
 
@@ -39,7 +39,7 @@ export class SolanaWallet {
     if (this.secret) addressOf(this.secret);
   }
 
-  address(): string | null {
+  address(): Address | null {
     return this.secret ? addressOf(this.secret) : null;
   }
 
@@ -49,7 +49,7 @@ export class SolanaWallet {
     return this.signerCache;
   }
 
-  generate(): string {
+  generate(): Address {
     if (this.secret) throw new Error("已有 Solana 钱包，不会覆盖");
     if (!existsSync(this.file)) throw new Error("本地配置文件 .env 不存在，未生成钱包");
     const data = join(dirname(this.file), "data");

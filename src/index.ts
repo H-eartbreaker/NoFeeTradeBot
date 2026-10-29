@@ -17,6 +17,8 @@ enableKeepAlive([
   "https://api.telegram.org",
   "https://aggregator-api.kyberswap.com",
   "https://api.honeypot.is",
+  "https://lite-api.jup.ag",
+  cfg.solanaRpcUrl,
   ...cfg.chains.map((c) => c.rpcUrls[0]),
 ]);
 const state = new State("data/state.json");

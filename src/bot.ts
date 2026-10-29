@@ -17,6 +17,7 @@ import type { RuleKind, Tier } from "./auto-rules.ts";
 import { registerApprovals } from "./approvals-panel.ts";
 import { registerOrders } from "./orders-panel.ts";
 import { registerTracked } from "./tracked-panel.ts";
+import { registerSolana } from "./sol-panel.ts";
 import { OrderStore } from "./orders.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
@@ -110,10 +111,12 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   registerTracked(bot, { state, logos, activeChain: activeKey, deps: getDeps });
   registerWalletPanel(bot, { state, chains: cfg.chains, logos, directory: wallets, list: walletList, activeWallet, activeChain: activeKey,
     deps: getDeps, readToken: services.readToken, onSwitch: () => { input = null; pendingBuys.clear(); } });
+  registerSolana(bot, { state, rpcUrl: cfg.solanaRpcUrl });
   const mainKeyboard = () => new InlineKeyboard().text("买入 / 查看代币", "nav:buy").text("持仓与盈亏", `positions:${activeKey()}:${activeWallet()}:0`).row()
     .text("钱包管理", "wallet:page:0").text("余额", "nav:balance").text("追踪钱包", "trk:list:0").row()
     .text("交易记录", `history:${activeWallet()}:${activeKey()}:0`).text("授权管理", `auth:list:${activeKey()}:${activeWallet()}:0`).row()
     .text("转账 / 兑换 / 跨链", "funds:menu").text("自动订单", "ord:list:0").row()
+    .text("Solana 买卖", "sol:home").row()
     .text("切换交易链", "nav:chain").text("设置", "nav:settings").row().text("止盈止损", "nav:tpsl").text("使用说明", "nav:help");
   const backKeyboard = () => new InlineKeyboard().text("返回首页", "nav:start");
   function invalidate(chain: string) {
