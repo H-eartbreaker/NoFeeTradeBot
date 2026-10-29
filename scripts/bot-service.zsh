@@ -8,7 +8,7 @@ cd "$PROJECT_DIR"
 mkdir -p data
 SERVICE_LABEL="local.demobot.$(printf '%s' "$PROJECT_DIR" | /usr/bin/cksum | /usr/bin/awk '{print $1}')"
 SERVICE_TARGET="gui/$(/usr/bin/id -u)/$SERVICE_LABEL"
-SERVICE_PLIST="$PROJECT_DIR/data/mac-bot.plist"
+SERVICE_PID="$PROJECT_DIR/data/mac-bot.pid"
 SERVICE_LOG="$PROJECT_DIR/data/mac-bot.log"
 
 if ! mkdir data/mac-launcher.lock 2>/dev/null; then
@@ -17,23 +17,19 @@ if ! mkdir data/mac-launcher.lock 2>/dev/null; then
 fi
 trap 'rmdir "$PROJECT_DIR/data/mac-launcher.lock" 2>/dev/null || true' EXIT
 
-service_pid() {
-  /bin/launchctl print "$SERVICE_TARGET" 2>/dev/null | /usr/bin/awk '/^[[:space:]]*pid = [0-9]+/ { print $3; exit }'
-}
-
 # 兼容以前从终端启动的实例，同时限定用户、启动参数和工作目录。
 manual_pids() {
   local candidate cwd
   for candidate in $(/usr/bin/pgrep -u "$(/usr/bin/id -u)" -f 'node .*src/index[.]ts' || true); do
     cwd=$(/usr/sbin/lsof -a -p "$candidate" -d cwd -Fn 2>/dev/null | /usr/bin/sed -n 's/^n//p' || true)
-    [[ "$cwd" == "$PROJECT_DIR" ]] && print "$candidate"
+    if [[ "$cwd" == "$PROJECT_DIR" ]]; then print "$candidate"; fi
   done
   return 0
 }
 
 case "${1:-}" in
   start)
-    if [[ -n "$(service_pid)" || -n "$(manual_pids)" ]]; then
+    if [[ -n "$(manual_pids)" ]]; then
       print '机器人已经在运行，无需重复启动。要更新代码，请先双击「停止机器人」，再双击「启动机器人」。'
       exit 0
     fi
@@ -42,33 +38,17 @@ case "${1:-}" in
     [[ -n "$NODE_BIN" ]] || { print '没有找到 Node.js，请联系开发 Agent 检查安装。'; exit 1; }
     /bin/launchctl bootout "$SERVICE_TARGET" >/dev/null 2>&1 || true
     : > "$SERVICE_LOG"
-    export PROJECT_DIR SERVICE_LABEL SERVICE_PLIST SERVICE_LOG NODE_BIN
-    "$NODE_BIN" --input-type=module - <<'JS'
-import { writeFileSync } from 'node:fs';
-const e = process.env;
-const xml = (value) => value.replace(/[&<>"']/g, (c) => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;'}[c]));
-writeFileSync(e.SERVICE_PLIST, `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>Label</key><string>${xml(e.SERVICE_LABEL)}</string>
-<key>ProgramArguments</key><array><string>${xml(e.NODE_BIN)}</string><string>--env-file=.env</string><string>src/index.ts</string></array>
-<key>WorkingDirectory</key><string>${xml(e.PROJECT_DIR)}</string>
-<key>EnvironmentVariables</key><dict><key>NODE_USE_ENV_PROXY</key><string>1</string></dict>
-<key>RunAtLoad</key><true/>
-<key>StandardOutPath</key><string>${xml(e.SERVICE_LOG)}</string>
-<key>StandardErrorPath</key><string>${xml(e.SERVICE_LOG)}</string>
-</dict></plist>`, { mode: 0o600 });
-JS
-    if ! /bin/launchctl bootstrap "gui/$(/usr/bin/id -u)" "$SERVICE_PLIST" 2>/dev/null; then
-      print 'macOS 没有允许启动后台任务。没有启动成功，请让开发 Agent 检查。'
-      exit 1
-    fi
+    # 直接由应用启动并脱离父进程，避开 launchd 对桌面工作目录的访问限制。
+    NODE_USE_ENV_PROXY=1 /usr/bin/nohup "$NODE_BIN" --env-file=.env src/index.ts >> "$SERVICE_LOG" 2>&1 < /dev/null &
+    BOT_PID=$!
+    disown 2>/dev/null || true
+    print "$BOT_PID" > "$SERVICE_PID"
     for attempt in {1..20}; do
       if /usr/bin/grep -q '机器人 @.* 已启动' "$SERVICE_LOG"; then
         print '机器人已启动，可以去 Telegram 使用了。关闭这个提示框后，机器人会继续在后台运行。'
         exit 0
       fi
-      if [[ "$attempt" -gt 2 && -z "$(service_pid)" ]]; then
+      if [[ "$attempt" -gt 2 ]] && ! /bin/kill -0 "$BOT_PID" 2>/dev/null; then
         print '机器人启动失败。错误记录在项目 data/mac-bot.log，请让开发 Agent 检查；不要把 .env 发给别人。'
         exit 1
       fi
@@ -84,7 +64,8 @@ JS
       [[ "$cwd" != "$PROJECT_DIR" ]] || /bin/kill -TERM "$candidate" 2>/dev/null || true
     done
     for attempt in {1..10}; do
-      if [[ -z "$(service_pid)" && -z "$(manual_pids)" ]]; then
+      if [[ -z "$(manual_pids)" ]]; then
+        rm -f "$SERVICE_PID"
         print '机器人已停止。停止期间，自动止盈止损和自动订单也不会执行。'
         exit 0
       fi
