@@ -79,8 +79,8 @@ Free test results are in `docs/test-results-2026-10-29.md`, and the test guide i
 ### 2. Clone and install dependencies
 
 ```bash
-git clone <repository-url> trading-bot
-cd trading-bot
+git clone https://github.com/H-eartbreaker/NoFeeTradeBot.git
+cd NoFeeTradeBot
 npm install
 ```
 
@@ -201,4 +201,4 @@ Tests use fake keys and mocked trade functions, so they never send real transact
 
 ## License
 
-No license has been chosen yet. Until a LICENSE file is added, all rights are reserved, and others should not copy, distribute or use the code commercially.
+This project is released under the MIT License. See [LICENSE](LICENSE).

@@ -79,8 +79,8 @@
 ### 2. 下载并安装依赖
 
 ```bash
-git clone <仓库地址> 交易机器人
-cd 交易机器人
+git clone https://github.com/H-eartbreaker/NoFeeTradeBot.git
+cd NoFeeTradeBot
 npm install
 ```
 
@@ -201,4 +201,4 @@ env -u SOLANA_PRIVATE_KEY npm test   # 单元与交互测试，不访问真实�
 
 ## 许可证
 
-尚未选择许可证。在添加 LICENSE 文件之前，默认保留所有权利，他人不应复制、分发或商用。
+本项目使用 MIT 许可证，详见 [LICENSE](LICENSE)。
