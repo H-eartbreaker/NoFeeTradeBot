@@ -120,7 +120,10 @@ test("首页和设置有可点击入口，时区验证和显示开关可保存",
   await f.send("UTC"); assert.equal(f.state.display.timeZone, "UTC");
   await f.callback("display:bsc:chart:0"); assert.equal(f.state.display.showChart, false);
   await f.callback("display:bsc:hour12:1"); assert.equal(f.state.display.hour12, true);
-  await f.callback("nav:tpsl"); await f.send("100 30"); assert.deepEqual(f.state.defaultRule, { tp: 100, sl: 30 });
+  await f.callback("nav:tpsl"); await f.send("100 30"); assert.equal(f.state.defaultRule.tp, 100); assert.equal(f.state.defaultRule.sl, 30); assert.deepEqual(f.state.defaultRule.tiers, [{ at: 100, pct: 100 }]);
+  await f.callback("nav:tpsl"); await f.send("50/50 100/100 sl30 trail20"); assert.deepEqual(f.state.defaultRule.tiers, [{ at: 50, pct: 50 }, { at: 100, pct: 100 }]); assert.equal(f.state.defaultRule.trail, 20);
+  await f.callback("nav:tpsl"); await f.callback("auto:pause:1"); assert.equal(f.state.autoPaused, true); assert.match(f.replies.at(-1)!, /已全局暂停/);
+  await f.callback("auto:pause:0"); assert.equal(f.state.autoPaused, false);
 });
 
 test("买前确认显示链CA名称池税费，确认后只执行一次并刷新原卡片", async (t) => {

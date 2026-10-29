@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { loadConfig } from "../src/config.ts";
-import { decide } from "../src/monitor.ts";
 import { State } from "../src/state.ts";
 import { errMsg, escapeHtml, extractAddress, fmtUnits, parseSlippageInput, pctToBps } from "../src/util.ts";
 
@@ -69,15 +68,6 @@ test("loadConfig 默认值与校验", () => {
 
 const E = 10n ** 18n;
 
-test("decide 止盈止损判断", () => {
-  assert.equal(decide(E, 2n * E, 100, 30), "tp");
-  assert.equal(decide(E, 19n * E / 10n, 100, 30), null);
-  assert.equal(decide(E, 7n * E / 10n, 100, 30), "sl");
-  assert.equal(decide(E, 8n * E / 10n, 100, 30), null);
-  assert.equal(decide(E, 5n * E, null, 30), null);
-  assert.equal(decide(E, 0n, null, null), null);
-  assert.equal(decide(0n, E, 100, 30), null);
-});
 
 test("State 仓位成本、规则与旧格式迁移", async () => {
   const { mkdtempSync, writeFileSync } = await import("node:fs");

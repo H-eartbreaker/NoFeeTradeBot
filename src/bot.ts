@@ -10,6 +10,8 @@ import { installButtonIcons } from "./button-icons.ts";
 import { registerFundsPanel } from "./funds-panel.ts";
 import { registerPositions } from "./positions-panel.ts";
 import { calculatePnl, floatingPnl } from "./pnl.ts";
+import { hasRule, parseRule } from "./auto-rules.ts";
+import type { Tier } from "./auto-rules.ts";
 import { registerApprovals } from "./approvals-panel.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
@@ -39,8 +41,10 @@ function usd(value: string | undefined): string {
   const n = Number(value);
   return value !== undefined && Number.isFinite(n) ? `$${n.toFixed(n < 1 ? 4 : 2)}` : "未知";
 }
-function ruleText(r: Rule): string {
-  return [r.tp !== null ? `止盈 +${r.tp}%` : null, r.sl !== null ? `止损 -${r.sl}%` : null].filter(Boolean).join(" / ") || "未设置";
+function ruleText(r: { tp: number | null; sl: number | null; tiers?: Tier[]; trail?: number | null }): string {
+  const tiers = r.tiers ?? (r.tp !== null ? [{ at: r.tp, pct: 100 }] : []);
+  return [...tiers.map((t) => t.pct === 100 ? `止盈 +${t.at}%` : `止盈 +${t.at}% 卖 ${t.pct}%`), r.sl !== null ? `止损 -${r.sl}%` : null, r.trail != null ? `移动止损 -${r.trail}%` : null]
+    .filter(Boolean).join(" / ") || "未设置";
 }
 function riskLines(report: RiskReport | null): string[] {
   const tax = (n: number | null | undefined) => n === null || n === undefined || !Number.isFinite(n) ? "未知" : `${n.toFixed(2)}%`;
@@ -186,11 +190,14 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       "buy-presets": `发送 1～6 个买入金额，用空格或逗号分隔，单位 ${d.chain.nativeSymbol}。例如：${d.chain.buyAmounts.map((a) => formatEther(a)).join(" ")}`,
       "sell-presets": "发送 1～6 个卖出比例，例如 25 50 100。支持 0.01～100。",
       "zone": "直接发送时区，例如 Asia/Shanghai、Asia/Tokyo 或 UTC。",
-      "tpsl": `当前默认：${ruleText(state.defaultRule)}\n直接发送两个数字，例如 100 30，表示赚 100% 或亏 30% 就全部卖出；发 off 关闭。此默认值适用于所有链的新买入。`,
+      "tpsl": `当前默认：${ruleText(state.defaultRule)}\n全局状态：${state.autoPaused ? "已暂停，不会自动卖出（手动卖出不受影响）" : "运行中"}\n直接发送两个数字，例如 100 30，表示赚 100% 或亏 30% 就全部卖出。\n也可以分档：50/50 表示涨 50% 卖出 50%，100/100 表示涨 100% 卖出剩余；sl30 为固定止损 -30%；trail20 为从最高点回撤 20% 全部卖出。\n例如：50/50 100/100 sl30 trail20。发 off 关闭。此默认值适用于所有链的新买入。`,
       "buy": `直接发送买入金额，单位 ${d.chain.nativeSymbol}，例如 ${formatEther(settings(chain).buyAmounts[0])}。`,
       "sell": "直接发送卖出比例，例如 30 或 30%。支持 0.01～100。",
     };
-    await ctx.reply(`${d.chain.label}\n${messages[kind]}\n发送“取消”退出，5 分钟内有效。`, { reply_markup: new InlineKeyboard().text("取消", "input:cancel") });
+    const kb = new InlineKeyboard();
+    if (kind === "tpsl") kb.text(state.autoPaused ? "恢复自动订单" : "全局暂停自动订单", `auto:pause:${state.autoPaused ? 0 : 1}`).row();
+    kb.text("取消", "input:cancel");
+    await ctx.reply(`${d.chain.label}\n${messages[kind]}\n发送“取消”退出，5 分钟内有效。`, { reply_markup: kb });
   }
 
   async function card(d: TradeDeps, token: Address, blockNumber?: bigint) {
@@ -214,7 +221,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       if (pos && pos.cost > 0n) {
         const book = calculatePnl(d.journal?.entries(walletId(d), chain.key) ?? []).books.get(token.toLowerCase());
         const profit = floatingPnl(book, info.balance, value);
-        lines.push(`本地持仓成本：${fmtUnits(pos.cost, 18, 6)} ${chain.nativeSymbol}`, profit === null ? "浮动收益：账本成本链条或余额不完整，暂不可核对" : `浮动收益：${profit > 0n ? "+" : ""}${fmtUnits(profit, 18, 8)} ${chain.nativeSymbol}（报价估算，未扣 Gas）`, `自动止盈止损：${ruleText(pos)}`);
+        lines.push(`本地持仓成本：${fmtUnits(pos.cost, 18, 6)} ${chain.nativeSymbol}`, profit === null ? "浮动收益：账本成本链条或余额不完整，暂不可核对" : `浮动收益：${profit > 0n ? "+" : ""}${fmtUnits(profit, 18, 8)} ${chain.nativeSymbol}（报价估算，未扣 Gas）`, `自动止盈止损：${hasRule(pos) ? ruleText(pos) : "未开启"}`);
       }
     }
     lines.push(`钱包余额：${native === null ? "查询失败" : `${fmtUnits(native, 18, 6)} ${chain.nativeSymbol}`}`, `买入滑点 ${s.buySlippageBps / 100}% · 卖出滑点 ${s.sellSlippageBps / 100}%`, `更新：${timestamp()}（${state.display.timeZone}）`);
@@ -229,7 +236,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       kb.row().text("自定义卖出比例", `custom:s:${chain.key}:${walletId(d)}:${token}`).row();
       kb.text("卖回本金", `exit:p:${chain.key}:${walletId(d)}:${token}`).text("按金额卖出", `exit:a:${chain.key}:${walletId(d)}:${token}`).row();
     }
-    if (pos) kb.text(pos.tp !== null || pos.sl !== null ? "关闭止盈止损" : "开启止盈止损", `t:${chain.key}:${walletId(d)}:${token}`).row();
+    if (pos) kb.text(hasRule(pos) ? "关闭止盈止损" : "开启止盈止损", `t:${chain.key}:${walletId(d)}:${token}`).row();
     kb.text("刷新", `r:${chain.key}:${walletId(d)}:${token}`).text("交易设置", `settings:${chain.key}`).row();
     if (state.display.showExplorer) kb.url("区块浏览器", chain.explorerTx(token).replace("/tx/", "/address/"));
     if (state.display.showChart) kb.url("搜索图表", `https://dexscreener.com/search?q=${token}`);
@@ -319,15 +326,14 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     await refreshCard(ctx, d, token, result.blockNumber, sourceMessageId);
   }
   async function applyRule(ctx: Context, text: string): Promise<boolean> {
-    if (text.trim().toLowerCase() === "off") {
-      state.setDefaultRule({ tp: null, sl: null });
+    const rule = parseRule(text);
+    if (rule === null) return false;
+    if (rule === "off") {
+      state.setDefaultRule({ tp: null, sl: null, tiers: [], trail: null });
       await ctx.reply("已关闭新买入的默认止盈止损，已有仓位规则保持不变"); return true;
     }
-    const parts = text.trim().split(/\s+/);
-    const [tp, sl] = parts.map(Number);
-    if (parts.length !== 2 || !parts.every((p) => /^\d+(?:\.\d{1,2})?$/.test(p)) || tp > 10_000 || sl >= 100 || (tp === 0 && sl === 0)) return false;
-    state.setDefaultRule({ tp: tp > 0 ? tp : null, sl: sl > 0 ? sl : null });
-    await ctx.reply(`新买入默认：${ruleText(state.defaultRule)}\n每 3 秒尝试检查，触发后全部卖出；已有仓位请在代币卡片里单独开启。`);
+    state.setDefaultRule(rule);
+    await ctx.reply(`新买入默认：${ruleText(state.defaultRule)}\n每 3 秒尝试检查，触发后按规则卖出；已有仓位请在代币卡片里单独开启。`);
     return true;
   }
   async function consumeInput(ctx: Context, text: string) {
@@ -432,6 +438,11 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     state.setDisplay(ctx.match[2] === "chart" ? { showChart: value } : ctx.match[2] === "explorer" ? { showExplorer: value } : { hour12: value });
     await ctx.answerCallbackQuery("已保存显示设置"); await showSettings(ctx, d.chain.key, true);
   });
+  bot.callbackQuery(/^auto:pause:([01])$/, async (ctx) => {
+    state.setAutoPaused(ctx.match[1] === "1");
+    await ctx.answerCallbackQuery(state.autoPaused ? "已全局暂停" : "已恢复");
+    await ctx.reply(state.autoPaused ? "自动止盈止损已全局暂停：不会再自动卖出，手动卖出不受影响。" : "自动止盈止损已恢复运行。", { reply_markup: backKeyboard() });
+  });
   bot.callbackQuery("input:cancel", async (ctx) => { input = null; await ctx.answerCallbackQuery("已取消"); await ctx.editMessageText("已取消，设置保持不变", { reply_markup: backKeyboard() }); });
   bot.on("message:text", async (ctx) => {
     if (input) {
@@ -456,8 +467,8 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     const token = ctx.match[3] as Address;
     const pos = state.position(d.chain.key, token, walletId(d));
     if (!pos) { await ctx.answerCallbackQuery("没有这个仓位的买入记录"); return; }
-    if (pos.tp !== null || pos.sl !== null) { state.setRule(d.chain.key, token, { tp: null, sl: null }, walletId(d)); await ctx.answerCallbackQuery("已关闭止盈止损"); }
-    else if (state.defaultRule.tp === null && state.defaultRule.sl === null) { await ctx.answerCallbackQuery("先在首页设置默认止盈止损"); return; }
+    if (hasRule(pos)) { state.setRule(d.chain.key, token, { tp: null, sl: null }, walletId(d)); await ctx.answerCallbackQuery("已关闭止盈止损"); }
+    else if (!hasRule({ sl: state.defaultRule.sl, trail: state.defaultRule.trail ?? null, tiers: state.defaultRule.tiers ?? (state.defaultRule.tp !== null ? [{ at: state.defaultRule.tp, pct: 100 }] : []) })) { await ctx.answerCallbackQuery("先在首页设置默认止盈止损"); return; }
     else { state.setRule(d.chain.key, token, state.defaultRule, walletId(d)); await ctx.answerCallbackQuery("已开启止盈止损"); }
     await showCard(ctx, d, token, true);
   });

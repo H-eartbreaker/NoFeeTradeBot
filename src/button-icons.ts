@@ -18,6 +18,8 @@ export function buttonIcon(text: string, data?: string): string | null {
   if (/^history:/.test(data)) return "📜";
   if (/^positions:/.test(data)) return "📊";
   if (/^pcard:/.test(data)) return "🖼️";
+  if (data === "auto:pause:1") return "⏸️";
+  if (data === "auto:pause:0") return "▶️";
   if (/^exit:p:/.test(data)) return "💵";
   if (/^exit:a:/.test(data)) return "💸";
   if (/^exit:confirm:/.test(data)) return "✅";
