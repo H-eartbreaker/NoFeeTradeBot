@@ -4,6 +4,7 @@ import type { Context } from "grammy";
 import { formatEther, formatUnits } from "viem";
 import type { Address } from "viem";
 import type { Wallets } from "./wallets.ts";
+import { registerLogos } from "./logos.ts";
 import type { Config } from "./config.ts";
 import { checkToken } from "./honeypot.ts";
 import type { RiskReport } from "./honeypot.ts";
@@ -72,6 +73,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     if (ctx.callbackQuery || ctx.message?.text?.startsWith("/")) input = null;
     await next();
   });
+  const logos = registerLogos(bot, state, cfg.chains);
   const mainKeyboard = () => new InlineKeyboard().text("买入 / 查看代币", "nav:buy").text("持仓与余额", "nav:balance").row()
     .text("切换交易链", "nav:chain").text("设置", "nav:settings").row().text("止盈止损", "nav:tpsl").text("使用说明", "nav:help");
   const backKeyboard = () => new InlineKeyboard().text("返回首页", "nav:start");
@@ -102,7 +104,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   async function home(ctx: Context) {
     const d = getDeps(activeKey())!;
     const s = settings(d.chain.key);
-    await panel(ctx, ["<b>demo bot</b>", `当前链：${d.chain.label}`, `钱包：<code>${d.clients.account.address}</code>`,
+    await panel(ctx, ["<b>demo bot</b>", `当前链：${logos.chain(d.chain)}`, `钱包：<code>${d.clients.account.address}</code>`,
       `买入滑点 ${s.buySlippageBps / 100}% · 卖出滑点 ${s.sellSlippageBps / 100}%`, `买前确认：${s.buyConfirmation ? "开启" : "关闭"}`,
       "", "选择下面的功能，或直接发送代币合约地址。"].join("\n"), mainKeyboard());
   }
@@ -111,7 +113,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
   }
   async function showChains(ctx: Context) {
     const kb = new InlineKeyboard();
-    for (const c of cfg.chains) kb.text(`${c.key === activeKey() ? "✓ " : ""}${c.label}`, `c:${c.key}`).row();
+    for (const c of cfg.chains) logos.button(kb, c, `${c.key === activeKey() ? "✓ " : ""}${c.label}`, `c:${c.key}`).row();
     kb.text("返回首页", "nav:start");
     await panel(ctx, "选择要交易的链：", kb);
   }
@@ -121,14 +123,14 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       const d = getDeps(c.key)!;
       try {
         const native = await d.clients.publicClient.getBalance({ address: d.clients.account.address });
-        const lines = [`<b>${c.label}</b> · ${fmtUnits(native, 18, 6)} ${c.nativeSymbol}`];
+        const lines = [`<b>${logos.chain(c)}</b> · ${fmtUnits(native, 18, 6)} ${logos.native(c)}`];
         const infos = await Promise.all(state.tokens(c.key, walletId(d)).map((t) => services.readToken(d.clients, t as Address)));
         for (const i of infos.filter((v): v is TokenInfo => !!v && v.balance > 0n)) {
           lines.push(`${escapeHtml(i.symbol.slice(0, 40))}：${fmtUnits(i.balance, i.decimals)}`);
           kb.text(`${i.symbol.slice(0, 20)} · ${c.key}`, `r:${c.key}:${walletId(d)}:${i.address}`).row();
         }
         return lines.join("\n");
-      } catch { return `<b>${c.label}</b> · 查询失败，请稍后重试`; }
+      } catch { return `<b>${logos.chain(c)}</b> · 查询失败，请稍后重试`; }
     }));
     kb.text("返回首页", "nav:start");
     await panel(ctx, `钱包：<code>${getDeps(activeKey())!.clients.account.address}</code>\n\n${sections.join("\n\n")}`, kb);
@@ -138,7 +140,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     const s = settings(key);
     const display = state.display;
     const kb = new InlineKeyboard();
-    for (const c of cfg.chains) kb.text(`${c.key === key ? "✓ " : ""}${c.label}`, `settings:${c.key}`).row();
+    for (const c of cfg.chains) logos.button(kb, c, `${c.key === key ? "✓ " : ""}${c.label}`, `settings:${c.key}`).row();
     kb.text(`买前确认：${s.buyConfirmation ? "开启" : "关闭"}`, `set:${key}:confirm:${s.buyConfirmation ? 0 : 1}`).row()
       .text(`发 CA 快速买入：${s.quickBuy ? "开启" : "关闭"}`, `set:${key}:quick:${s.quickBuy ? 0 : 1}`).row()
       .text(`买入滑点 ${s.buySlippageBps / 100}%`, `set:${key}:buy-slip`).text(`卖出滑点 ${s.sellSlippageBps / 100}%`, `set:${key}:sell-slip`).row()
@@ -146,8 +148,9 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       .text(`图表入口：${display.showChart ? "显示" : "隐藏"}`, `display:${key}:chart:${display.showChart ? 0 : 1}`)
       .text(`浏览器入口：${display.showExplorer ? "显示" : "隐藏"}`, `display:${key}:explorer:${display.showExplorer ? 0 : 1}`).row()
       .text(`时区 ${display.timeZone}`, `set:${key}:zone`).text(`${display.hour12 ? 12 : 24} 小时制`, `display:${key}:hour12:${display.hour12 ? 0 : 1}`).row()
+      .text("链 Logo", "logos:settings").row()
       .text("自动止盈止损", "nav:tpsl").text("恢复本链默认", `set:${key}:reset`).row().text("返回首页", "nav:start");
-    await panel(ctx, ["<b>交易设置</b>", `正在设置：${d.chain.label}`, `买入按钮：${s.buyAmounts.map((a) => formatEther(a)).join(" / ")} ${d.chain.nativeSymbol}`,
+    await panel(ctx, ["<b>交易设置</b>", `正在设置：${logos.chain(d.chain)}`, `买入按钮：${s.buyAmounts.map((a) => formatEther(a)).join(" / ")} ${d.chain.nativeSymbol}`,
       `卖出按钮：${s.sellPercentages.map((p) => `${p}%`).join(" / ")}`, `快速买入金额：第一档 ${formatEther(s.buyAmounts[0])} ${d.chain.nativeSymbol}`, "", "交易参数按链保存；显示和时间设置对所有链生效。", "修改参数不会重写已有仓位的止盈止损。"].join("\n"), kb, edit);
   }
   async function prompt(ctx: Context, kind: Input["kind"], chain = activeKey(), token?: Address, sourceMessageId?: number) {
@@ -174,7 +177,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
     if (!info) return null;
     const [report, buyQuote, sellQuote, native] = await Promise.all([risk(d, token), quote(d, NATIVE, token, s.buyAmounts[0]), info.balance > 0n ? quote(d, token, NATIVE, info.balance) : null,
       clients.publicClient.getBalance({ address: clients.account.address, blockNumber }).catch(() => null)]);
-    const lines = [`<b>${escapeHtml(info.symbol.slice(0, 40))}</b> · ${escapeHtml(info.name.slice(0, 100))}`, `链：${chain.label}`, `钱包：<code>${clients.account.address}</code>`, `CA：<code>${token}</code>`, "", ...riskLines(report)];
+    const lines = [`<b>${escapeHtml(info.symbol.slice(0, 40))}</b> · ${escapeHtml(info.name.slice(0, 100))}`, `链：${logos.chain(chain)}`, `钱包：<code>${clients.account.address}</code>`, `CA：<code>${token}</code>`, "", ...riskLines(report)];
     if (buyQuote) {
       lines.push(`参考报价：${formatEther(s.buyAmounts[0])} ${chain.nativeSymbol} ≈ ${fmtUnits(BigInt(buyQuote.routeSummary.amountOut), info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))}（${usd(buyQuote.routeSummary.amountOutUsd)}）`, ...poolLines(buyQuote));
       const quantity = Number(formatUnits(BigInt(buyQuote.routeSummary.amountOut), info.decimals));
@@ -266,7 +269,7 @@ export function createBot(cfg: Config, deps: Map<string, TradeDeps>, state: Stat
       pendingBuys.set(id, { wallet: walletId(d), chain: d.chain.key, token, amount, slippage: s.buySlippageBps, route, report: report ? { ...report } : null, info: { ...info }, sourceMessageId, expires: Date.now() + 60_000 });
       const kb = new InlineKeyboard().text("确认买入", `confirm:${id}`).text("取消", `cancel:${id}`);
       if (routePools(route).length > 6) kb.row().text("全部池详情", `pools:${id}`);
-      const text = ["<b>买入前请核对</b>", `链：${d.chain.label}`, `钱包：<code>${d.clients.account.address}</code>`, `名字：${escapeHtml(info.name.slice(0, 100))}（${escapeHtml(info.symbol.slice(0, 40))}）`, `CA：<code>${token}</code>`,
+      const text = ["<b>买入前请核对</b>", `链：${logos.chain(d.chain)}`, `钱包：<code>${d.clients.account.address}</code>`, `名字：${escapeHtml(info.name.slice(0, 100))}（${escapeHtml(info.symbol.slice(0, 40))}）`, `CA：<code>${token}</code>`,
         `买入：${formatEther(amount)} ${d.chain.nativeSymbol}`, `预计收到：${fmtUnits(BigInt(route.routeSummary.amountOut), info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))}`, `本次滑点：${s.buySlippageBps / 100}%`,
         `按本次报价最低接受：${fmtUnits(BigInt(route.routeSummary.amountOut) * BigInt(10_000 - s.buySlippageBps) / 10_000n, info.decimals)} ${escapeHtml(info.symbol.slice(0, 40))}`,
         "", ...riskLines(report), "", ...poolLines(route), "", "报价会变化，确认时会再次核对风险和交易池。", "60 秒内有效；此时尚未发送交易。"].join("\n");

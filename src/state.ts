@@ -15,6 +15,7 @@ export type ChainSettings = {
   quickBuy?: boolean;
 };
 export type DisplaySettings = { showChart: boolean; showExplorer: boolean; timeZone: string; hour12: boolean };
+export type ChainLogo = { chain?: string; native?: string };
 const defaultDisplay = (): DisplaySettings => ({ showChart: true, showExplorer: true, timeZone: "Asia/Shanghai", hour12: false });
 type StateData = {
   tokens: Record<string, string[]>;
@@ -27,6 +28,7 @@ type StateData = {
   activeWallet: string;
   walletTokens: Record<string, Record<string, string[]>>;
   appliedTransactions: string[];
+  logos?: { enabled: boolean; chains: Record<string, ChainLogo> };
 };
 
 const posKey = (chain: string, token: string, wallet = "main") => `${wallet === "main" ? "" : `${wallet}:`}${chain}:${token.toLowerCase()}`;
@@ -54,6 +56,7 @@ export class State {
         activeWallet: typeof p.activeWallet === "string" ? p.activeWallet : "main",
         walletTokens: (p.walletTokens as StateData["walletTokens"] | undefined) ?? {},
         appliedTransactions: (p.appliedTransactions as string[] | undefined) ?? [],
+        logos: p.logos as StateData["logos"],
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("本地状态文件无法读取或已损坏，请保留原文件并检查，未自动改写");
@@ -103,6 +106,13 @@ export class State {
   }
   get activeWallet(): string { return this.data.activeWallet; }
   setActiveWallet(id: string): void { this.data.activeWallet = id; this.save(); }
+
+  get logos(): { enabled: boolean; chains: Record<string, ChainLogo> } {
+    return structuredClone(this.data.logos ?? { enabled: true, chains: {} });
+  }
+  setLogos(patch: { enabled?: boolean; chains?: Record<string, ChainLogo> }): void {
+    this.data.logos = { ...this.logos, ...structuredClone(patch) }; this.save();
+  }
 
   get defaultRule(): Rule {
     return this.data.defaultRule;
